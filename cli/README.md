@@ -46,12 +46,16 @@ edm quality list-runs --dataset-id <id>
 
 edm lineage dataset --dataset-id <id>
 
+edm alert list --project-id <id>
+edm alert acknowledge --alert-id <id>
+edm alert resolve --alert-id <id>
+
 edm query --dataset-id <id> --sql "SELECT * FROM dataset LIMIT 10"
 ```
 
 Run `edm --help` or `edm <group> --help` for the full command list (`auth`, `workspace`,
-`project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `query`). All output is
-JSON; errors print a one-line message and exit non-zero, so the CLI is scriptable.
+`project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`). All
+output is JSON; errors print a one-line message and exit non-zero, so the CLI is scriptable.
 
 ## Why a CLI before a UI
 

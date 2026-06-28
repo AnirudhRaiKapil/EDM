@@ -175,6 +175,7 @@ MVP.
 | `edm-query` | SQL execution / federated query access |
 | `edm-quality` | Validation rules, evaluated on every job run before publication. Pulled forward from V2 — see [ADR-0005](adr/0005-quality-pulled-into-mvp.md) |
 | `edm-lineage` | Source/pipeline -> dataset edges recorded on every job run. Pulled forward from V2 — see [ADR-0006](adr/0006-lineage-pulled-into-mvp.md) |
+| `edm-alerting` | Alerts raised directly by `edm-job` on failure/quality-warning; open/acknowledged/resolved lifecycle. Pulled forward from V2 — see [ADR-0008](adr/0008-alerting-pulled-into-mvp.md) |
 
 ### Enterprise (V2)
 
@@ -184,7 +185,6 @@ MVP.
 | `edm-notification` | Email, Slack, Teams, webhooks |
 | `edm-monitoring` | Metrics, health checks, SLAs |
 | `edm-audit` | Immutable audit trail |
-| `edm-alerting` | Alert rules and routing |
 | `edm-ai` | Copilot, NL-to-SQL, pipeline recommendations |
 
 ### Interfaces

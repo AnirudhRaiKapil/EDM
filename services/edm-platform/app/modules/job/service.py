@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.events import publish
+from app.modules.alerting.service import create_alert
 from app.modules.catalog import service as catalog_service
 from app.modules.core.exceptions import NotFoundError, QualityCheckFailedError
 from app.modules.core.models import utcnow
@@ -73,6 +74,12 @@ def run_pipeline(db: Session, owner_id: str, pipeline_id: str, trigger: str = "m
         record_edge(db, "source", source.id, "dataset", dataset.id, job.id)
         record_edge(db, "pipeline", pipeline.id, "dataset", dataset.id, job.id)
 
+        if quality_outcome == "passed_with_warnings":
+            create_alert(
+                db, pipeline.project_id, "job", job.id, "warning",
+                f"pipeline '{pipeline.name}' succeeded with quality warnings on dataset '{dataset.id}'",
+            )
+
         job.status = "succeeded"
         job.dataset_id = dataset.id
         job.metrics = {"rowsIn": rows_in, "rowsOut": rows_out, "qualityOutcome": quality_outcome}
@@ -91,6 +98,10 @@ def run_pipeline(db: Session, owner_id: str, pipeline_id: str, trigger: str = "m
         db.add(job)
         db.commit()
         db.refresh(job)
+        create_alert(
+            db, pipeline.project_id, "job", job.id, "critical",
+            f"pipeline '{pipeline.name}' failed: {exc}",
+        )
         publish("pipeline.failed", {"jobId": job.id, "pipelineId": pipeline.id, "error": str(exc)})
 
     return job

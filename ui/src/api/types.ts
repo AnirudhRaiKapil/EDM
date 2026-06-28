@@ -173,6 +173,17 @@ export interface LineageGraph {
   downstream: LineageEdge[];
 }
 
+export interface Alert {
+  id: string;
+  project_id: string;
+  source_entity_type: string;
+  source_entity_id: string;
+  severity: "info" | "warning" | "critical";
+  message: string;
+  status: "open" | "acknowledged" | "resolved";
+  created_at: string;
+}
+
 export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];

@@ -10,6 +10,7 @@ from app.database import Base, engine
 from app.modules.core.exceptions import EdmError
 
 # Import every module's models so Base.metadata is fully populated before create_all().
+from app.modules.alerting import models as alerting_models  # noqa: F401
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.catalog import models as catalog_models  # noqa: F401
 from app.modules.job import models as job_models  # noqa: F401
@@ -20,6 +21,7 @@ from app.modules.quality import models as quality_models  # noqa: F401
 from app.modules.source import models as source_models  # noqa: F401
 from app.modules.workspace import models as workspace_models  # noqa: F401
 
+from app.modules.alerting.router import router as alerting_router
 from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.ingestion.router import router as ingestion_router
@@ -62,6 +64,7 @@ for router in (
     quality_router,
     query_router,
     lineage_router,
+    alerting_router,
 ):
     app.include_router(router, prefix=API_PREFIX)
 

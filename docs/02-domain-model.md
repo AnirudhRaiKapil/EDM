@@ -220,9 +220,11 @@ The lineage graph is the union of all edges.
 | Field | Type | Notes |
 |---|---|---|
 | id | UUID | |
+| projectId | FK -> Project | added beyond the original spec, so listing is permission-checkable the same way as every other project-scoped resource (ADR-0008) |
 | sourceEntity | (type, id) | what triggered it, e.g. a failed Job or Quality Run |
+| message | string | added beyond the original spec — the human-readable reason, since there's no `channel` to format a notification for yet |
 | severity | enum | `info`, `warning`, `critical` |
-| channel | enum | `email`, `slack`, `teams`, `webhook` |
+| channel | enum | `email`, `slack`, `teams`, `webhook` — **not implemented in the MVP** (ADR-0008); alerts are in-app/API-only until `edm-notification` exists |
 | status | enum | `open`, `acknowledged`, `resolved` |
 
 ### Audit Event

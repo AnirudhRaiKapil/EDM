@@ -1,5 +1,6 @@
 import { apiClient } from "./client";
 import type {
+  Alert,
   Dataset,
   DatasetDetail,
   Job,
@@ -200,6 +201,18 @@ export async function listQualityRuns(datasetId: string) {
 
 export async function getDatasetLineage(datasetId: string) {
   const { data } = await apiClient.get<LineageGraph>(`/lineage/datasets/${datasetId}`);
+  return data;
+}
+
+export async function listAlerts(projectId: string, status?: string) {
+  const { data } = await apiClient.get<Alert[]>(`/projects/${projectId}/alerts`, {
+    params: status ? { status } : undefined,
+  });
+  return data;
+}
+
+export async function updateAlertStatus(alertId: string, status: string) {
+  const { data } = await apiClient.patch<Alert>(`/alerts/${alertId}`, { status });
   return data;
 }
 

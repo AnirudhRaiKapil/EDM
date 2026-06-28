@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as api from "../api/endpoints";
 import { ErrorBanner } from "../components/ErrorBanner";
+import { StatusBadge } from "../components/StatusBadge";
 import type { ConnectorType, TransformationType } from "../api/types";
 
 const TRANSFORMATION_TYPES: TransformationType[] = [
@@ -267,9 +268,59 @@ function PipelinesTab({ projectId }: { projectId: string }) {
   );
 }
 
+function AlertsTab({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<string>("open");
+  const { data: alerts } = useQuery({
+    queryKey: ["alerts", projectId, statusFilter],
+    queryFn: () => api.listAlerts(projectId, statusFilter || undefined),
+  });
+
+  const updateStatus = useMutation({
+    mutationFn: ({ alertId, status }: { alertId: string; status: string }) =>
+      api.updateAlertStatus(alertId, status),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alerts", projectId] }),
+  });
+
+  return (
+    <div>
+      <div className="inline-form">
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="open">open</option>
+          <option value="acknowledged">acknowledged</option>
+          <option value="resolved">resolved</option>
+          <option value="">all</option>
+        </select>
+      </div>
+
+      <ul className="card-list">
+        {alerts?.map((alert) => (
+          <li key={alert.id} className="card rule-card">
+            <StatusBadge value={alert.severity} />
+            <StatusBadge value={alert.status} />
+            <span>{alert.message}</span>
+            <span className="muted">{new Date(alert.created_at).toLocaleString()}</span>
+            {alert.status !== "acknowledged" && (
+              <button onClick={() => updateStatus.mutate({ alertId: alert.id, status: "acknowledged" })}>
+                Acknowledge
+              </button>
+            )}
+            {alert.status !== "resolved" && (
+              <button onClick={() => updateStatus.mutate({ alertId: alert.id, status: "resolved" })}>
+                Resolve
+              </button>
+            )}
+          </li>
+        ))}
+        {alerts?.length === 0 && <p className="muted">No {statusFilter || ""} alerts.</p>}
+      </ul>
+    </div>
+  );
+}
+
 export function ProjectDetailPage() {
   const { workspaceId, projectId } = useParams<{ workspaceId: string; projectId: string }>();
-  const [tab, setTab] = useState<"sources" | "pipelines">("sources");
+  const [tab, setTab] = useState<"sources" | "pipelines" | "alerts">("sources");
   if (!workspaceId || !projectId) return null;
 
   return (
@@ -286,12 +337,17 @@ export function ProjectDetailPage() {
         <button className={tab === "pipelines" ? "tab active" : "tab"} onClick={() => setTab("pipelines")}>
           Pipelines
         </button>
+        <button className={tab === "alerts" ? "tab active" : "tab"} onClick={() => setTab("alerts")}>
+          Alerts
+        </button>
         <Link to={`/catalog?project_id=${projectId}`} className="tab">
           Catalog
         </Link>
       </div>
 
-      {tab === "sources" ? <SourcesTab projectId={projectId} /> : <PipelinesTab projectId={projectId} />}
+      {tab === "sources" && <SourcesTab projectId={projectId} />}
+      {tab === "pipelines" && <PipelinesTab projectId={projectId} />}
+      {tab === "alerts" && <AlertsTab projectId={projectId} />}
     </div>
   );
 }

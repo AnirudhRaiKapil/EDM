@@ -26,10 +26,11 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 - `src/api/types.ts` — TypeScript interfaces mirroring every backend Pydantic schema.
 - `src/api/endpoints.ts` — one typed function per API call, grouped by resource.
 - `src/context/AuthContext.tsx` — login/register/logout, token persisted to `localStorage`.
-- `src/pages/` — one file per route. `ProjectDetailPage.tsx` holds a Sources tab and a Pipelines
-  tab (with an inline transformation-step builder); `DatasetDetailPage.tsx` holds schema, tags,
-  classification, data quality (rules + run history), lineage, and a SQL query runner — every
-  backend capability has a corresponding place to use it from here.
+- `src/pages/` — one file per route. `ProjectDetailPage.tsx` holds a Sources tab, a Pipelines tab
+  (with an inline transformation-step builder), and an Alerts tab (status-filterable,
+  acknowledge/resolve); `DatasetDetailPage.tsx` holds schema, tags, classification, data quality
+  (rules + run history), lineage, and a SQL query runner — every backend capability has a
+  corresponding place to use it from here.
 
 ## Routes
 
@@ -37,7 +38,7 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 /login, /register
 /workspaces                                          list + create
 /workspaces/:workspaceId                              projects + members
-/workspaces/:workspaceId/projects/:projectId          sources + pipelines tabs
+/workspaces/:workspaceId/projects/:projectId          sources + pipelines + alerts tabs
 /pipelines/:pipelineId                                transformations, run, job history
 /catalog                                              dataset search
 /datasets/:datasetId                                  schema, tags, classification, quality, lineage, query
@@ -48,7 +49,8 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 There's no browser available to a coding agent directly, so verifying this app means launching a
 real (headless) browser against it — see `e2e/smoke.mjs`, which drives the entire golden path
 (register → workspace → project → source → upload → pipeline → run → tag/classify → quality rule
-→ lineage → query) through actual clicks and form fills, then screenshots every step.
+→ lineage → query → deliberately-failing pipeline → acknowledge/resolve the resulting alert)
+through actual clicks and form fills, then screenshots every step.
 
 ```
 npm run e2e:install   # once, downloads the Chromium binary

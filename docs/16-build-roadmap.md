@@ -70,7 +70,12 @@ suite plus a CLI smoke check on every push/PR to `main`. `edm-ui` (`ui/`) is bui
 ([ADR-0007](adr/0007-react-ui-and-cors-fix.md)) — and was verified by launching a real headless
 browser against it (`ui/e2e/smoke.mjs`), which immediately caught a backend CORS
 misconfiguration that no direct-HTTP-client test (`pytest`, `curl`, the CLI) could ever have
-caught. `edm-governance` (beyond RBAC), `edm-notification`/`edm-alerting`, `edm-monitoring`,
-`edm-ai`, and the SDK remain unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the
+caught. `edm-alerting` (also pulled forward from V2 — [ADR-0008](adr/0008-alerting-pulled-into-mvp.md))
+is built: `edm-job` raises an `Alert` directly on any failure or quality warning, with an
+open/acknowledged/resolved lifecycle exposed through the API, CLI (`edm alert
+list/acknowledge/resolve`), and a UI tab — covered by both backend tests and an extended
+`ui/e2e/smoke.mjs` run that drives a real failure through to resolution. `edm-governance`
+(beyond RBAC), `edm-notification`, `edm-monitoring`, `edm-ai`, and the SDK remain unbuilt. See
+[17-codebase-map.md](17-codebase-map.md) for the
 file-level picture, kept current
 per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).

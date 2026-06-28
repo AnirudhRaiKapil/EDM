@@ -9,6 +9,10 @@ const TONE: Record<string, string> = {
   warning: "status-warning",
   failed: "status-bad",
   blocking: "status-bad",
+  critical: "status-bad",
+  open: "status-warning",
+  acknowledged: "status-pending",
+  resolved: "status-good",
 };
 
 export function StatusBadge({ value }: { value: string | null | undefined }) {

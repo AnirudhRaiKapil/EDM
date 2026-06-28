@@ -2,10 +2,10 @@
 
 The MVP modular monolith: `edm-core`, `edm-auth`, `edm-workspace`, `edm-source`,
 `edm-ingestion`, `edm-pipeline`, `edm-job`, `edm-storage`, `edm-catalog`, `edm-metadata`,
-`edm-quality`, `edm-lineage`, and `edm-query` as internal Python packages behind one FastAPI app
-(`edm-quality` and `edm-lineage` were originally scoped as V2 in 01-product-architecture.md but
-were pulled forward because data quality and lineage were explicit, heavily-emphasized
-requirements in 00-vision-and-requirements.md). See
+`edm-quality`, `edm-lineage`, `edm-alerting`, and `edm-query` as internal Python packages behind
+one FastAPI app (`edm-quality`, `edm-lineage`, and `edm-alerting` were originally scoped as V2 in
+01-product-architecture.md but were each pulled forward because they served explicit,
+heavily-emphasized requirements in 00-vision-and-requirements.md — see ADR-0005/0006/0008). See
 [ADR-0002](../../docs/adr/0002-python-fastapi-modular-monolith.md) and
 [ADR-0003](../../docs/adr/0003-trimmed-phase-1-stack.md) for why, and
 [02-domain-model.md](../../docs/02-domain-model.md) for the entities these modules implement.
@@ -67,6 +67,12 @@ toward a dataset is preserved, not just the latest. Multi-hop dataset-to-dataset
 Gold pipeline consuming a Silver dataset) isn't representable yet — `Pipeline.source_id` only
 points at a `Source` today, not at another `Dataset`.
 
+### Alerting (`app/modules/alerting/`)
+`edm-job` raises an `Alert` directly (not via the event bus — see ADR-0008) whenever a run fails
+for any reason, or succeeds with `qualityOutcome: "passed_with_warnings"`. List a project's
+alerts via `GET /projects/{id}/alerts` (optional `?status=open|acknowledged|resolved`), triage
+via `PATCH /alerts/{id}` with `{"status": "acknowledged"|"resolved"|"open"}`.
+
 ## Tests
 
 ```
@@ -82,7 +88,8 @@ membership/ownership enforcement; `test_transformations.py` unit-tests each tran
 SQLite connector, including rejecting non-`SELECT` queries; `test_quality.py` covers blocking
 vs. warning severity, including that a blocking failure leaves prior published data intact;
 `test_lineage.py` covers tracing a dataset back to its source/pipeline and that reruns append
-rather than replace edges.
+rather than replace edges; `test_alerting.py` covers critical alerts on failure, warning alerts
+on quality warnings, the acknowledge/resolve lifecycle, and that non-members can't see them.
 
 ## Swapping in real infrastructure later
 

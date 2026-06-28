@@ -60,6 +60,7 @@ try {
 
   await page.click("text=ops");
   await page.waitForURL(/\/projects\/[^/]+$/);
+  const projectUrl = page.url();
   await shot(page, "project-detail-sources-tab");
 
   await page.fill('input[placeholder="Source name"]', "events-csv");
@@ -129,6 +130,49 @@ try {
   await page.click('button:has-text("Run query")');
   await page.waitForSelector("table.data-table:has-text('lin@example.com')", { timeout: 10000 });
   await shot(page, "query-result");
+
+  // Trigger a job failure (bad transformation parameters) to exercise alerting end to end.
+  await page.goto(projectUrl);
+  await page.click('button:has-text("Pipelines")');
+  await page.waitForSelector('input[placeholder="Pipeline name"]');
+  await page.fill('input[placeholder="Pipeline name"]', "broken-events");
+  await page.locator(".pipeline-form .inline-form select").nth(0).selectOption({ label: "events-csv" });
+  await page.fill('input[placeholder="Output dataset name"]', "broken");
+  await page.click('button:has-text("+ Add transformation")');
+  await page.locator(".steps-builder select").nth(0).selectOption("select_columns");
+  await page.fill(
+    '.steps-builder input[placeholder*="parameters JSON"]',
+    '{"columns": ["does_not_exist"]}',
+  );
+  await page.click('button:has-text("Create pipeline")');
+  await page.waitForSelector("text=broken-events");
+  await page.click("text=broken-events");
+  await page.waitForURL(/\/pipelines\/[^/]+$/);
+
+  await page.click('button:has-text("Run pipeline")');
+  await page.waitForSelector("text=failed", { timeout: 15000 });
+  await shot(page, "broken-pipeline-job-failed");
+
+  await page.goto(projectUrl);
+  await page.click('button:has-text("Alerts")');
+  await page.waitForSelector(".rule-card:has-text('broken-events')");
+  await shot(page, "alerts-open");
+
+  // Switch off the "open" filter so the card stays visible through its status
+  // transitions -- acknowledging/resolving correctly removes an alert from the
+  // "open" filtered view, which is the behavior under test, not a bug to dodge.
+  await page.locator(".tabs ~ div select").selectOption("");
+  await page.click('.rule-card:has-text("broken-events") >> button:has-text("Acknowledge")');
+  await page.waitForSelector(".rule-card:has-text('broken-events') .status-badge:has-text('acknowledged')");
+  await shot(page, "alert-acknowledged");
+
+  await page.click('.rule-card:has-text("broken-events") >> button:has-text("Resolve")');
+  await page.waitForSelector(".rule-card:has-text('broken-events') .status-badge:has-text('resolved')");
+  await shot(page, "alert-resolved-in-all-view");
+
+  await page.locator(".tabs ~ div select").selectOption("open");
+  await page.waitForSelector("text=No open alerts.");
+  await shot(page, "alert-resolved");
 
   console.log("RESULT: PASS");
 } catch (err) {

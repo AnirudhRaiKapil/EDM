@@ -43,6 +43,7 @@ Status legend: **Built** (has working code + tests) · **Placeholder** (director
 | `adr/0005-quality-pulled-into-mvp.md` | Why `edm-quality` was pulled forward from the V2 module list into the MVP. |
 | `adr/0006-lineage-pulled-into-mvp.md` | Why `edm-lineage` was pulled forward from the V2 module list into the MVP. |
 | `adr/0007-react-ui-and-cors-fix.md` | UI tech stack choices, and why `CORSMiddleware` had to be added to the backend (the UI was the first cross-origin browser client). |
+| `adr/0008-alerting-pulled-into-mvp.md` | Why `edm-alerting` was pulled forward from the V2 module list into the MVP, and why alerts are created by direct call from `edm-job` rather than via the event bus. |
 | `diagrams/` | Empty — reserved for diagram source files (excalidraw/mermaid/drawio) if/when needed. |
 
 ## `services/edm-platform/` — the application
@@ -121,7 +122,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `models.py` | `Job` — status, trigger, timestamps, `metrics` (rows in/out, quality outcome), `error_message`, `dataset_id` produced. |
 | `schemas.py` | `JobRead`. |
-| `service.py` | `run_pipeline` — the orchestration core: load source data -> apply transformations in order -> if the output Dataset already exists, evaluate its quality rules *before* touching storage (a `blocking` failure raises and the previously published data is left untouched) -> write Parquet via the storage adapter -> create a new Schema version -> record `source->dataset` and `pipeline->dataset` lineage edges -> mark the Job succeeded/failed, publishing `pipeline.started`/`completed`/`failed` events throughout. |
+| `service.py` | `run_pipeline` — the orchestration core: load source data -> apply transformations in order -> if the output Dataset already exists, evaluate its quality rules *before* touching storage (a `blocking` failure raises and the previously published data is left untouched) -> write Parquet via the storage adapter -> create a new Schema version -> record `source->dataset` and `pipeline->dataset` lineage edges -> raise an `Alert` if quality passed with warnings -> mark the Job succeeded, or on any exception (including a quality `blocking` failure) mark it failed and raise a `critical` `Alert` — publishing `pipeline.started`/`completed`/`failed` events throughout. |
 | `router.py` | `POST /pipelines/{id}/jobs` (trigger), `GET /pipelines/{id}/jobs`, `GET /jobs/{id}`. |
 
 ### `app/modules/storage/` — object storage abstraction
@@ -165,6 +166,15 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `service.py` | `record_edge` (publishes `lineage.edge_recorded`), `get_upstream`/`get_downstream` (query the same table from either direction — edges are append-only, so reruns add new edges rather than overwriting). `edm-job` calls `record_edge` twice per successful run. |
 | `router.py` | `GET /lineage/datasets/{id}`, `GET /lineage/sources/{id}`, `GET /lineage/pipelines/{id}` — each resolves the entity back to its project for the permission check, then returns its upstream+downstream edges. |
 
+### `app/modules/alerting/` — what's currently broken
+
+| File | What it does |
+|---|---|
+| `models.py` | `Alert` — `project_id` (so listing is permission-checkable the same way as every other project-scoped resource), generic `source_entity_type`/`source_entity_id`, `severity` (`info`/`warning`/`critical`), `message`, `status` (`open`/`acknowledged`/`resolved`). |
+| `schemas.py` | `AlertRead`, `AlertStatusUpdate`. |
+| `service.py` | `create_alert` (publishes `alert.created`), `list_alerts` (optional `status` filter), `update_status`. Called directly from `edm-job`, not via the event bus — see [ADR-0008](adr/0008-alerting-pulled-into-mvp.md) for why. |
+| `router.py` | `GET /projects/{id}/alerts` (optional `?status=`), `PATCH /alerts/{id}` (`{"status": "acknowledged"\|"resolved"\|"open"}`). |
+
 ### `app/modules/query/` — read access to published data
 
 | File | What it does |
@@ -187,6 +197,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `test_storage_adapter.py` | `save_raw_upload` strips path components from a client-supplied filename (the bug the CLI caught, plus an explicit traversal-attempt case). |
 | `test_lineage.py` | A dataset's lineage correctly names its source and pipeline as upstream (and vice versa downstream); reruns append a new edge per job rather than replacing the old one. |
 | `test_cors.py` | The configured UI origin gets `Access-Control-Allow-Origin` on preflight; an arbitrary origin doesn't. Regression test for the bug `edm-ui`'s first real run caught. |
+| `test_alerting.py` | A failing job raises a `critical` alert; a quality-warning job still succeeds but raises a `warning` alert; acknowledge/resolve transitions; non-members get 404 on a project's alerts. |
 
 ### Other files in `services/edm-platform/`
 
@@ -202,7 +213,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `edm_cli/config.py` | Where credentials persist (`~/.edm/credentials.json`) and where the API base URL comes from (`EDM_API_URL` env var, default `localhost:8000`). |
 | `edm_cli/client.py` | `ApiClient` — injects the bearer token, raises `ApiError` with the server's `detail` message on any 4xx/5xx so the CLI can print something readable instead of a stack trace. |
-| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. |
+| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. |
 | `pyproject.toml` | Packages `edm_cli` and registers the `edm` console-script entry point. |
 | `README.md` | Install steps, the golden path as CLI commands, and why this exists (it's what caught the path-handling bug in `app/modules/storage/adapter.py` — see `docs/16-build-roadmap.md`). |
 
@@ -224,11 +235,11 @@ no UI component library (plain CSS in `src/index.css`).
 | `src/pages/LoginPage.tsx`, `RegisterPage.tsx` | Auth forms; redirect to `/workspaces` on success. |
 | `src/pages/WorkspacesPage.tsx` | List the caller's workspaces (membership-filtered by the backend, not the UI), create a new one. |
 | `src/pages/WorkspaceDetailPage.tsx` | Projects (list + create) and members (list + add, owner-only enforced server-side) for one workspace. |
-| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for file connectors, inline `connection_config` fields for `sqlite`) and a Pipelines tab (create, with an inline repeatable transformation-step builder — type dropdown + a raw JSON `parameters` field per step). |
+| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for file connectors, inline `connection_config` fields for `sqlite`), a Pipelines tab (create, with an inline repeatable transformation-step builder — type dropdown + a raw JSON `parameters` field per step), and an Alerts tab (status-filterable list, acknowledge/resolve). |
 | `src/pages/PipelineDetailPage.tsx` | Transformation list, a "Run pipeline" button, and job history (status, rows in/out, quality outcome, link to the produced dataset) — polls while a job is `running`/`queued`. |
 | `src/pages/CatalogPage.tsx` | Dataset search (by name substring, optionally scoped to a project via `?project_id=`). |
 | `src/pages/DatasetDetailPage.tsx` | Everything about one dataset in one place: schema, tags + classification (editable), data quality (add/remove rules, run history), lineage (upstream/downstream), and a SQL query runner against it — one component per concern (`SchemaSection`, `TagsAndClassificationSection`, `QualitySection`, `LineageSection`, `QuerySection`). |
-| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, pipeline (with transformations), run, view dataset, tag, classify, add a quality rule, check lineage, run a query — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
+| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, pipeline (with transformations), run, view dataset, tag, classify, add a quality rule, check lineage, run a query, then deliberately trigger a failing pipeline and walk its alert through acknowledge -> resolve — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
 | `package.json` | `npm run dev`/`build`/`e2e`/`e2e:install`. Dependencies: `react-router-dom` (routing), `@tanstack/react-query` (server-state caching/mutations), `axios` (HTTP). Dev-only: `playwright` (e2e), `vite`, `typescript`. |
 | `.env.example` | `VITE_API_URL`, defaulting to `http://localhost:8000/api/v1`. |
 | `README.md` | Run instructions, route map, e2e instructions, and the CORS bug story. |

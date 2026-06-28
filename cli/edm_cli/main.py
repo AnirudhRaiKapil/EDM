@@ -373,6 +373,36 @@ def lineage_pipeline(pipeline_id):
     echo_json(ApiClient().get(f"/lineage/pipelines/{pipeline_id}"))
 
 
+# --- alerts -----------------------------------------------------------------
+
+@cli.group()
+def alert():
+    """List and triage alerts raised by failed jobs or quality warnings."""
+
+
+@alert.command("list")
+@click.option("--project-id", required=True)
+@click.option("--status", default=None, type=click.Choice(["open", "acknowledged", "resolved"]))
+@handle_errors
+def alert_list(project_id, status):
+    params = {"status": status} if status else None
+    echo_json(ApiClient().get(f"/projects/{project_id}/alerts", params=params))
+
+
+@alert.command("acknowledge")
+@click.option("--alert-id", required=True)
+@handle_errors
+def alert_acknowledge(alert_id):
+    echo_json(ApiClient().patch(f"/alerts/{alert_id}", json={"status": "acknowledged"}))
+
+
+@alert.command("resolve")
+@click.option("--alert-id", required=True)
+@handle_errors
+def alert_resolve(alert_id):
+    echo_json(ApiClient().patch(f"/alerts/{alert_id}", json={"status": "resolved"}))
+
+
 # --- query ----------------------------------------------------------------
 
 @cli.command("query")
