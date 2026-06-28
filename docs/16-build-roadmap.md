@@ -51,6 +51,10 @@ recommended first milestone rather than building all eleven modules to completio
 
 Locked in via ADR: backend is Python + FastAPI as a modular monolith
 ([ADR-0002](adr/0002-python-fastapi-modular-monolith.md)), running against lightweight
-substitutes for Postgres/MinIO/Kafka/Spark/Trino/Keycloak/Airflow until Docker/WSL is set up on
-the dev machine ([ADR-0003](adr/0003-trimmed-phase-1-stack.md)). Implementation of the MVP
-module list has started in `services/edm-platform/`.
+substitutes for Postgres/MinIO/Kafka/Spark/Trino/Keycloak/Airflow
+([ADR-0003](adr/0003-trimmed-phase-1-stack.md)). WSL2 + Docker Engine were installed but the
+WSL2 VM proved unstable on this laptop (VBS/nested-virtualization conflict); Docker-based infra
+is deferred indefinitely, not just until install ([ADR-0004](adr/0004-wsl2-docker-deferred-on-dev-laptop.md)).
+The MVP module list (`auth`, `workspace`, `source`, `ingestion`, `pipeline`, `job`, `storage`,
+`catalog`, `metadata`, `query`) is implemented in `services/edm-platform/` and verified working
+end to end (register → workspace/project → source → upload → pipeline → job → catalog → query).
