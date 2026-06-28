@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import JSON, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -16,3 +16,4 @@ class Source(Base, UUIDPrimaryKeyMixin, TimestampMixin, OwnedMixin):
     ingestion_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="batch")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     raw_file_path: Mapped[str] = mapped_column(String(1000), nullable=True)
+    connection_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)

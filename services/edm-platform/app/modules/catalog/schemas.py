@@ -5,6 +5,19 @@ from pydantic import BaseModel, ConfigDict
 from app.modules.metadata.schemas import SchemaRead
 
 
+class TagCreate(BaseModel):
+    key: str
+    value: str
+
+
+class TagRead(BaseModel):
+    id: str
+    key: str
+    value: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DatasetRead(BaseModel):
     id: str
     project_id: str
@@ -22,3 +35,8 @@ class DatasetRead(BaseModel):
 
 class DatasetDetailRead(DatasetRead):
     schema_info: SchemaRead | None = None
+    tags: list[TagRead] = []
+
+
+class DatasetClassificationUpdate(BaseModel):
+    classification: list[str]

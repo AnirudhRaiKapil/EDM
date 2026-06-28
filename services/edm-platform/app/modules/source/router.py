@@ -20,7 +20,13 @@ def create_source(
 ):
     require_project_access(db, current_user.id, project_id)
     return service.create_source(
-        db, current_user.id, project_id, payload.name, payload.connector_type, payload.ingestion_mode
+        db,
+        current_user.id,
+        project_id,
+        payload.name,
+        payload.connector_type,
+        payload.ingestion_mode,
+        payload.connection_config,
     )
 
 
