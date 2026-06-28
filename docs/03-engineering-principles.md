@@ -1,7 +1,7 @@
 # EDM Platform — Engineering Principles
 
-These ten rules apply to every module, every PR, every design decision. When in doubt, the rule
-wins over local convenience.
+These eleven rules apply to every module, every PR, every design decision. When in doubt, the
+rule wins over local convenience.
 
 ## Rule 1 — Product First
 We are not integrating tools; we are building a product. A user should never have to know
@@ -71,6 +71,21 @@ Major choices are recorded as Architecture Decision Records in [adr/](adr/). See
 [adr/0001-apache-iceberg-as-table-format.md](adr/0001-apache-iceberg-as-table-format.md) for the
 format.
 
+## Rule 11 — Docs Stay In Sync With Code
+
+A code change that isn't reflected in `docs/` is unfinished, not done. Concretely, before any
+change is considered complete:
+
+- If it introduces a decision (a new dependency, a scope cut, a deviation from an earlier doc),
+  record it as an ADR in [adr/](adr/) — see Rule 10.
+- If it adds, removes, or repurposes a file or folder, update
+  [17-codebase-map.md](17-codebase-map.md) so it still accurately describes the repo.
+- If it changes a module's API surface or behavior described in an existing doc, update that doc
+  in the same change, not as a follow-up.
+
+This applies even to small changes — `docs/` drifting from reality a little at a time is how it
+ends up useless. There is no "the docs lag the code" phase in this project.
+
 ## How These Rules Are Enforced in Practice
 
 | Rule | Enforced by |
@@ -80,3 +95,4 @@ format.
 | Metadata Driven | Pipeline/Transformation definitions are JSON/YAML documents validated against a schema, stored in `edm-pipeline`, never as ad hoc scripts |
 | Versioned | Every entity in [02-domain-model.md](02-domain-model.md) marked with a `version` field has an append-only history table, not in-place mutation |
 | Owned | `owner`, `projectId`, `status` are non-nullable columns on every top-level entity |
+| Docs In Sync | [17-codebase-map.md](17-codebase-map.md) is updated in the same change that adds/moves/removes a file, not after |

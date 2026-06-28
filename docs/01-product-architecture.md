@@ -341,7 +341,7 @@ block downstream publication.
 
 - [00-vision-and-requirements.md](00-vision-and-requirements.md) — why this platform exists
 - [02-domain-model.md](02-domain-model.md) — canonical entities and relationships
-- [03-engineering-principles.md](03-engineering-principles.md) — the 10 rules every change must follow
+- [03-engineering-principles.md](03-engineering-principles.md) — the 11 rules every change must follow
 - [04-repository-structure.md](04-repository-structure.md) — monorepo layout
 - [16-build-roadmap.md](16-build-roadmap.md) — phased build order
 - [adr/](adr/) — Architecture Decision Records for any deviation from this document

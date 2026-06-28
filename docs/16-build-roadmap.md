@@ -63,5 +63,8 @@ alongside CSV/JSON, and `edm-quality` (pulled forward from V2 — [ADR-0005](adr
 all implemented and tested on top of that slice. `edm-cli` (`cli/`) is implemented as a thin
 client over the same API and was used to drive the full golden path by hand — that exercise
 caught and fixed a real path-handling bug in the upload flow that the test suite alone had
-missed. `edm-lineage`, `edm-governance` (beyond RBAC), `edm-notification`/`edm-alerting`,
-`edm-monitoring`, `edm-ai`, the SDK, and the UI remain unbuilt.
+missed. CI (`.github/workflows/test.yml`) now runs the full pytest suite plus a CLI smoke check
+on every push/PR to `main`. `edm-lineage`, `edm-governance` (beyond RBAC),
+`edm-notification`/`edm-alerting`, `edm-monitoring`, `edm-ai`, the SDK, and the UI remain
+unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept current
+per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).
