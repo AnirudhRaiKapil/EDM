@@ -7,6 +7,7 @@ from app.modules.core.exceptions import NotFoundError, QualityCheckFailedError
 from app.modules.core.models import utcnow
 from app.modules.ingestion.connectors import load_source_dataframe
 from app.modules.job.models import Job
+from app.modules.lineage.service import record_edge
 from app.modules.metadata.service import create_new_schema_version
 from app.modules.pipeline.service import get_pipeline
 from app.modules.pipeline.transformations import apply_transformation
@@ -68,6 +69,9 @@ def run_pipeline(db: Session, owner_id: str, pipeline_id: str, trigger: str = "m
 
         schema = create_new_schema_version(db, dataset.id, df)
         catalog_service.attach_schema(db, dataset, schema.id)
+
+        record_edge(db, "source", source.id, "dataset", dataset.id, job.id)
+        record_edge(db, "pipeline", pipeline.id, "dataset", dataset.id, job.id)
 
         job.status = "succeeded"
         job.dataset_id = dataset.id

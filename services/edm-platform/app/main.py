@@ -11,6 +11,7 @@ from app.modules.core.exceptions import EdmError
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.catalog import models as catalog_models  # noqa: F401
 from app.modules.job import models as job_models  # noqa: F401
+from app.modules.lineage import models as lineage_models  # noqa: F401
 from app.modules.metadata import models as metadata_models  # noqa: F401
 from app.modules.pipeline import models as pipeline_models  # noqa: F401
 from app.modules.quality import models as quality_models  # noqa: F401
@@ -21,6 +22,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.ingestion.router import router as ingestion_router
 from app.modules.job.router import router as job_router
+from app.modules.lineage.router import router as lineage_router
 from app.modules.pipeline.router import router as pipeline_router
 from app.modules.quality.router import router as quality_router
 from app.modules.query.router import router as query_router
@@ -49,6 +51,7 @@ for router in (
     catalog_router,
     quality_router,
     query_router,
+    lineage_router,
 ):
     app.include_router(router, prefix=API_PREFIX)
 

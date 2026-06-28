@@ -2,10 +2,10 @@
 
 The MVP modular monolith: `edm-core`, `edm-auth`, `edm-workspace`, `edm-source`,
 `edm-ingestion`, `edm-pipeline`, `edm-job`, `edm-storage`, `edm-catalog`, `edm-metadata`,
-`edm-quality`, and `edm-query` as internal Python packages behind one FastAPI app
-(`edm-quality` was originally scoped as V2 in 01-product-architecture.md but was pulled forward
-because data quality was an explicit, heavily-emphasized requirement in
-00-vision-and-requirements.md). See
+`edm-quality`, `edm-lineage`, and `edm-query` as internal Python packages behind one FastAPI app
+(`edm-quality` and `edm-lineage` were originally scoped as V2 in 01-product-architecture.md but
+were pulled forward because data quality and lineage were explicit, heavily-emphasized
+requirements in 00-vision-and-requirements.md). See
 [ADR-0002](../../docs/adr/0002-python-fastapi-modular-monolith.md) and
 [ADR-0003](../../docs/adr/0003-trimmed-phase-1-stack.md) for why, and
 [02-domain-model.md](../../docs/02-domain-model.md) for the entities these modules implement.
@@ -58,6 +58,15 @@ Rules attach to a Dataset (so only after its first job run): `POST
 published dataset/schema untouched (`GET /catalog/datasets/{id}/quality-runs` for history);
 `warning` failures still publish but mark `job.metrics.qualityOutcome = "passed_with_warnings"`.
 
+### Lineage (`app/modules/lineage/`)
+Every successful job records two edges: `source -> dataset` and `pipeline -> dataset` (tagged
+with the job that produced them). Trace either direction via `GET /lineage/datasets/{id}`,
+`GET /lineage/sources/{id}`, or `GET /lineage/pipelines/{id}` — each returns `{upstream,
+downstream}`. Reruns append new edges rather than replacing old ones, so the full run history
+toward a dataset is preserved, not just the latest. Multi-hop dataset-to-dataset lineage (e.g. a
+Gold pipeline consuming a Silver dataset) isn't representable yet — `Pipeline.source_id` only
+points at a `Source` today, not at another `Dataset`.
+
 ## Tests
 
 ```
@@ -71,7 +80,9 @@ import time, so per-test env vars alone don't isolate tests within one pytest pr
 membership/ownership enforcement; `test_transformations.py` unit-tests each transformation;
 `test_catalog_tags.py` covers tagging/classification; `test_sqlite_connector.py` covers the
 SQLite connector, including rejecting non-`SELECT` queries; `test_quality.py` covers blocking
-vs. warning severity, including that a blocking failure leaves prior published data intact.
+vs. warning severity, including that a blocking failure leaves prior published data intact;
+`test_lineage.py` covers tracing a dataset back to its source/pipeline and that reruns append
+rather than replace edges.
 
 ## Swapping in real infrastructure later
 

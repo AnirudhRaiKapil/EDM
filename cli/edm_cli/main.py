@@ -345,6 +345,34 @@ def quality_list_runs(dataset_id):
     echo_json(ApiClient().get(f"/catalog/datasets/{dataset_id}/quality-runs"))
 
 
+# --- lineage ----------------------------------------------------------------
+
+@cli.group()
+def lineage():
+    """Trace what fed into (upstream) or consumes from (downstream) an entity."""
+
+
+@lineage.command("dataset")
+@click.option("--dataset-id", required=True)
+@handle_errors
+def lineage_dataset(dataset_id):
+    echo_json(ApiClient().get(f"/lineage/datasets/{dataset_id}"))
+
+
+@lineage.command("source")
+@click.option("--source-id", required=True)
+@handle_errors
+def lineage_source(source_id):
+    echo_json(ApiClient().get(f"/lineage/sources/{source_id}"))
+
+
+@lineage.command("pipeline")
+@click.option("--pipeline-id", required=True)
+@handle_errors
+def lineage_pipeline(pipeline_id):
+    echo_json(ApiClient().get(f"/lineage/pipelines/{pipeline_id}"))
+
+
 # --- query ----------------------------------------------------------------
 
 @cli.command("query")

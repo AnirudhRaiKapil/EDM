@@ -41,6 +41,7 @@ Status legend: **Built** (has working code + tests) · **Placeholder** (director
 | `adr/0003-trimmed-phase-1-stack.md` | The full table of "real engine -> MVP substitute" swaps (Postgres->SQLite, Kafka->in-process bus, Spark->pandas, Trino->DuckDB, Keycloak->self-issued JWT, etc.) and why each is safe to defer. |
 | `adr/0004-wsl2-docker-deferred-on-dev-laptop.md` | Why Docker-based infra is deferred *indefinitely* on this laptop (VBS/nested-virtualization conflict), not just until installed. |
 | `adr/0005-quality-pulled-into-mvp.md` | Why `edm-quality` was pulled forward from the V2 module list into the MVP. |
+| `adr/0006-lineage-pulled-into-mvp.md` | Why `edm-lineage` was pulled forward from the V2 module list into the MVP. |
 | `diagrams/` | Empty — reserved for diagram source files (excalidraw/mermaid/drawio) if/when needed. |
 
 ## `services/edm-platform/` — the application
@@ -119,7 +120,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `models.py` | `Job` — status, trigger, timestamps, `metrics` (rows in/out, quality outcome), `error_message`, `dataset_id` produced. |
 | `schemas.py` | `JobRead`. |
-| `service.py` | `run_pipeline` — the orchestration core: load source data -> apply transformations in order -> if the output Dataset already exists, evaluate its quality rules *before* touching storage (a `blocking` failure raises and the previously published data is left untouched) -> write Parquet via the storage adapter -> create a new Schema version -> mark the Job succeeded/failed, publishing `pipeline.started`/`completed`/`failed` events throughout. |
+| `service.py` | `run_pipeline` — the orchestration core: load source data -> apply transformations in order -> if the output Dataset already exists, evaluate its quality rules *before* touching storage (a `blocking` failure raises and the previously published data is left untouched) -> write Parquet via the storage adapter -> create a new Schema version -> record `source->dataset` and `pipeline->dataset` lineage edges -> mark the Job succeeded/failed, publishing `pipeline.started`/`completed`/`failed` events throughout. |
 | `router.py` | `POST /pipelines/{id}/jobs` (trigger), `GET /pipelines/{id}/jobs`, `GET /jobs/{id}`. |
 
 ### `app/modules/storage/` — object storage abstraction
@@ -154,6 +155,15 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `service.py` | `create_rule`/`list_rules`/`delete_rule`; `evaluate_rules` — runs every rule for a dataset against a candidate DataFrame, records a `QualityRun`, and returns `"passed"`/`"passed_with_warnings"`/`"failed"` (failed = at least one `blocking` rule failed). Publishes `quality.evaluated`/`quality.failed` events. |
 | `router.py` | `POST/GET /catalog/datasets/{id}/quality-rules`, `DELETE .../quality-rules/{rule_id}`, `GET /catalog/datasets/{id}/quality-runs`. |
 
+### `app/modules/lineage/` — where did this dataset's data come from
+
+| File | What it does |
+|---|---|
+| `models.py` | `LineageEdge` — generic directed edge (`from_entity_type`/`from_entity_id` -> `to_entity_type`/`to_entity_id`), optionally tied to the `Job` that created it. The graph is just the union of rows in this table, per `02-domain-model.md`. |
+| `schemas.py` | `LineageEdgeRead`, `LineageGraphRead` (`{entity_type, entity_id, upstream, downstream}`). |
+| `service.py` | `record_edge` (publishes `lineage.edge_recorded`), `get_upstream`/`get_downstream` (query the same table from either direction — edges are append-only, so reruns add new edges rather than overwriting). `edm-job` calls `record_edge` twice per successful run. |
+| `router.py` | `GET /lineage/datasets/{id}`, `GET /lineage/sources/{id}`, `GET /lineage/pipelines/{id}` — each resolves the entity back to its project for the permission check, then returns its upstream+downstream edges. |
+
 ### `app/modules/query/` — read access to published data
 
 | File | What it does |
@@ -174,6 +184,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `test_sqlite_connector.py` | SQLite source via `table`, and that a non-`SELECT` query is rejected. |
 | `test_quality.py` | A `blocking` rule failure rejects the batch and leaves the previously published dataset's row count unchanged; a `warning` rule failure still publishes but flags `qualityOutcome`. |
 | `test_storage_adapter.py` | `save_raw_upload` strips path components from a client-supplied filename (the bug the CLI caught, plus an explicit traversal-attempt case). |
+| `test_lineage.py` | A dataset's lineage correctly names its source and pipeline as upstream (and vice versa downstream); reruns append a new edge per job rather than replacing the old one. |
 
 ### Other files in `services/edm-platform/`
 
@@ -189,7 +200,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `edm_cli/config.py` | Where credentials persist (`~/.edm/credentials.json`) and where the API base URL comes from (`EDM_API_URL` env var, default `localhost:8000`). |
 | `edm_cli/client.py` | `ApiClient` — injects the bearer token, raises `ApiError` with the server's `detail` message on any 4xx/5xx so the CLI can print something readable instead of a stack trace. |
-| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. |
+| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. |
 | `pyproject.toml` | Packages `edm_cli` and registers the `edm` console-script entry point. |
 | `README.md` | Install steps, the golden path as CLI commands, and why this exists (it's what caught the path-handling bug in `app/modules/storage/adapter.py` — see `docs/16-build-roadmap.md`). |
 
