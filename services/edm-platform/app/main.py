@@ -13,6 +13,7 @@ from app.modules.catalog import models as catalog_models  # noqa: F401
 from app.modules.job import models as job_models  # noqa: F401
 from app.modules.metadata import models as metadata_models  # noqa: F401
 from app.modules.pipeline import models as pipeline_models  # noqa: F401
+from app.modules.quality import models as quality_models  # noqa: F401
 from app.modules.source import models as source_models  # noqa: F401
 from app.modules.workspace import models as workspace_models  # noqa: F401
 
@@ -21,6 +22,7 @@ from app.modules.catalog.router import router as catalog_router
 from app.modules.ingestion.router import router as ingestion_router
 from app.modules.job.router import router as job_router
 from app.modules.pipeline.router import router as pipeline_router
+from app.modules.quality.router import router as quality_router
 from app.modules.query.router import router as query_router
 from app.modules.source.router import router as source_router
 from app.modules.workspace.router import router as workspace_router
@@ -45,6 +47,7 @@ for router in (
     pipeline_router,
     job_router,
     catalog_router,
+    quality_router,
     query_router,
 ):
     app.include_router(router, prefix=API_PREFIX)

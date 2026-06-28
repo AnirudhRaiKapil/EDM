@@ -1,8 +1,11 @@
 # edm-platform
 
 The MVP modular monolith: `edm-core`, `edm-auth`, `edm-workspace`, `edm-source`,
-`edm-ingestion`, `edm-pipeline`, `edm-job`, `edm-storage`, `edm-catalog`, `edm-metadata`, and
-`edm-query` as internal Python packages behind one FastAPI app. See
+`edm-ingestion`, `edm-pipeline`, `edm-job`, `edm-storage`, `edm-catalog`, `edm-metadata`,
+`edm-quality`, and `edm-query` as internal Python packages behind one FastAPI app
+(`edm-quality` was originally scoped as V2 in 01-product-architecture.md but was pulled forward
+because data quality was an explicit, heavily-emphasized requirement in
+00-vision-and-requirements.md). See
 [ADR-0002](../../docs/adr/0002-python-fastapi-modular-monolith.md) and
 [ADR-0003](../../docs/adr/0003-trimmed-phase-1-stack.md) for why, and
 [02-domain-model.md](../../docs/02-domain-model.md) for the entities these modules implement.
@@ -46,6 +49,15 @@ security principles, so SQLite (no credentials needed) is the connector for now.
 ### Transformation types (`app/modules/pipeline/transformations.py`)
 `standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`
 
+### Data quality (`app/modules/quality/`)
+Rules attach to a Dataset (so only after its first job run): `POST
+/catalog/datasets/{id}/quality-rules` with `{"expectation_type": "...", "parameters": {"column":
+"..."}, "severity": "warning"|"blocking"}`. Expectation types: `not_null`, `unique`, `min`,
+`max`, `regex`, `allowed_values`. Every job run evaluates existing rules against its output
+*before* writing storage/schema: a `blocking` failure fails the job and leaves the previously
+published dataset/schema untouched (`GET /catalog/datasets/{id}/quality-runs` for history);
+`warning` failures still publish but mark `job.metrics.qualityOutcome = "passed_with_warnings"`.
+
 ## Tests
 
 ```
@@ -58,7 +70,8 @@ import time, so per-test env vars alone don't isolate tests within one pytest pr
 `test_golden_path.py` covers CSV and JSON ingestion end to end; `test_rbac.py` covers
 membership/ownership enforcement; `test_transformations.py` unit-tests each transformation;
 `test_catalog_tags.py` covers tagging/classification; `test_sqlite_connector.py` covers the
-SQLite connector, including rejecting non-`SELECT` queries.
+SQLite connector, including rejecting non-`SELECT` queries; `test_quality.py` covers blocking
+vs. warning severity, including that a blocking failure leaves prior published data intact.
 
 ## Swapping in real infrastructure later
 

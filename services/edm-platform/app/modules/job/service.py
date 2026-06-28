@@ -3,13 +3,14 @@ from sqlalchemy.orm import Session
 
 from app.events import publish
 from app.modules.catalog import service as catalog_service
-from app.modules.core.exceptions import NotFoundError
+from app.modules.core.exceptions import NotFoundError, QualityCheckFailedError
 from app.modules.core.models import utcnow
 from app.modules.ingestion.connectors import load_source_dataframe
 from app.modules.job.models import Job
 from app.modules.metadata.service import create_new_schema_version
 from app.modules.pipeline.service import get_pipeline
 from app.modules.pipeline.transformations import apply_transformation
+from app.modules.quality.service import evaluate_rules
 from app.modules.source.service import get_source
 from app.modules.storage.adapter import storage
 
@@ -41,7 +42,20 @@ def run_pipeline(db: Session, owner_id: str, pipeline_id: str, trigger: str = "m
         dataset = catalog_service.get_dataset_by_name(
             db, pipeline.project_id, pipeline.output_dataset_name, pipeline.output_layer
         )
-        if dataset is None:
+
+        quality_outcome = None
+        if dataset is not None:
+            # Quality rules can only exist once a dataset has run at least once (rules are
+            # defined against a Dataset, per 02-domain-model.md). Evaluated BEFORE writing
+            # storage/schema, so a blocking failure leaves the previously published data
+            # untouched ("prevent downstream publication" per 00-vision-and-requirements.md).
+            quality_run = evaluate_rules(db, dataset.id, df, job.id)
+            quality_outcome = quality_run.outcome
+            if quality_outcome == "failed":
+                raise QualityCheckFailedError(
+                    f"data quality check failed for dataset '{dataset.id}': {quality_run.results}"
+                )
+        else:
             dataset = catalog_service.register_dataset(
                 db, owner_id, pipeline.project_id, pipeline.output_dataset_name,
                 pipeline.output_layer, physical_location="pending",
@@ -57,7 +71,7 @@ def run_pipeline(db: Session, owner_id: str, pipeline_id: str, trigger: str = "m
 
         job.status = "succeeded"
         job.dataset_id = dataset.id
-        job.metrics = {"rowsIn": rows_in, "rowsOut": rows_out}
+        job.metrics = {"rowsIn": rows_in, "rowsOut": rows_out, "qualityOutcome": quality_outcome}
         job.finished_at = utcnow()
         db.add(job)
         db.commit()

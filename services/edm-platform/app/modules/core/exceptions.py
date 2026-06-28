@@ -20,3 +20,7 @@ class ForbiddenError(EdmError):
 
 class ValidationFailedError(EdmError):
     status_code = 422
+
+
+class QualityCheckFailedError(EdmError):
+    status_code = 422

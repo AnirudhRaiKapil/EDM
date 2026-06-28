@@ -173,12 +173,12 @@ MVP.
 | `edm-catalog` | Search and discovery over registered datasets |
 | `edm-metadata` | Metadata repository, schema registry |
 | `edm-query` | SQL execution / federated query access |
+| `edm-quality` | Validation rules, evaluated on every job run before publication. Pulled forward from V2 — see [ADR-0005](adr/0005-quality-pulled-into-mvp.md) |
 
 ### Enterprise (V2)
 
 | Module | Responsibility |
 |---|---|
-| `edm-quality` | Validation, profiling, quality rules |
 | `edm-lineage` | End-to-end lineage graph |
 | `edm-governance` | Policies, retention, classification |
 | `edm-notification` | Email, Slack, Teams, webhooks |
