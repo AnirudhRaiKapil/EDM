@@ -12,12 +12,17 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 120
     event_bus: str = "inprocess"
     kafka_bootstrap_servers: str = "localhost:9092"
+    cors_origins: str = "http://localhost:5173"
 
     @property
     def data_path(self) -> Path:
         path = Path(self.data_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 settings = Settings()

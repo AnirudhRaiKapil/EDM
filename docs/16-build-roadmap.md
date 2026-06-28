@@ -65,7 +65,12 @@ all implemented and tested on top of that slice. `edm-cli` (`cli/`) is implement
 client over the same API, covers every module including lineage, and was used to drive the full
 golden path by hand — that exercise caught and fixed a real path-handling bug in the upload flow
 that the test suite alone had missed. CI (`.github/workflows/test.yml`) now runs the full pytest
-suite plus a CLI smoke check on every push/PR to `main`. `edm-governance` (beyond RBAC),
-`edm-notification`/`edm-alerting`, `edm-monitoring`, `edm-ai`, the SDK, and the UI remain
-unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept current
+suite plus a CLI smoke check on every push/PR to `main`. `edm-ui` (`ui/`) is built — Vite + React
++ TypeScript, one page per route, covering the same full golden path as the CLI
+([ADR-0007](adr/0007-react-ui-and-cors-fix.md)) — and was verified by launching a real headless
+browser against it (`ui/e2e/smoke.mjs`), which immediately caught a backend CORS
+misconfiguration that no direct-HTTP-client test (`pytest`, `curl`, the CLI) could ever have
+caught. `edm-governance` (beyond RBAC), `edm-notification`/`edm-alerting`, `edm-monitoring`,
+`edm-ai`, and the SDK remain unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the
+file-level picture, kept current
 per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).

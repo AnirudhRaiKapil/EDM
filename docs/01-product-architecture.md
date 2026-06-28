@@ -191,9 +191,9 @@ MVP.
 
 | Module | Responsibility |
 |---|---|
-| `edm-ui` | React + TypeScript web application |
-| `edm-cli` | Scriptable command-line interface (`edm <noun> <verb>`) |
-| `edm-sdk` | Client libraries for programmatic access |
+| `edm-ui` | React + TypeScript web application — built, see [ADR-0007](adr/0007-react-ui-and-cors-fix.md) |
+| `edm-cli` | Scriptable command-line interface (`edm <noun> <verb>`) — built |
+| `edm-sdk` | Client libraries for programmatic access — not yet built |
 
 ## 6. Service Communication
 

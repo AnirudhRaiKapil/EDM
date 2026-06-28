@@ -17,12 +17,12 @@ Status legend: **Built** (has working code + tests) · **Placeholder** (director
 | `services/edm-platform/` | Built | The actual product: one FastAPI modular monolith implementing every MVP+ module. |
 | `cli/` | Built | `edm-cli` — thin command-line client over the API. |
 | `infrastructure/` | Partial | `docker/docker-compose.yml` (Postgres+MinIO+Kafka) exists but is unverified on this dev machine ([ADR-0004](adr/0004-wsl2-docker-deferred-on-dev-laptop.md)); `helm/`, `kubernetes/`, `terraform/` are empty placeholders for later. |
-| `ui/` | Placeholder | Future `edm-ui` (React + TypeScript), per [01-product-architecture.md](01-product-architecture.md). Nothing here yet. |
+| `ui/` | Built | `edm-ui` — Vite + React + TypeScript web client, see [ADR-0007](adr/0007-react-ui-and-cors-fix.md). |
 | `sdk/` | Placeholder | Future generated/hand-written client libraries (the SDK `edm-cli` itself could eventually be built on top of). Nothing here yet. |
 | `integrations/` | Placeholder | Future home for connector definitions referenced by `edm-ingestion`, beyond what's inlined in `app/modules/ingestion/connectors.py` today. Nothing here yet. |
 | `examples/` | Placeholder | Future sample pipelines/source configs for demos. Nothing here yet. |
 | `tests/` (top level) | Placeholder | Reserved for cross-module/e2e tests per [04-repository-structure.md](04-repository-structure.md); all current tests live under `services/edm-platform/tests/` because there's only one module today. |
-| `.github/workflows/test.yml` | Built | CI: runs the full `services/edm-platform` pytest suite, then installs `cli/` and smoke-checks `edm --help`, on every push/PR to `main`. |
+| `.github/workflows/test.yml` | Built | CI: runs the full `services/edm-platform` pytest suite, installs `cli/` and smoke-checks `edm --help`, and runs `ui/`'s `tsc -b && vite build` — all on every push/PR to `main`. The UI's Playwright e2e suite is not in CI yet (see `ui/README.md`). |
 | `.claude/` | N/A | Claude Code tool settings for this workspace, not part of the platform itself. |
 
 ## `docs/`
@@ -42,6 +42,7 @@ Status legend: **Built** (has working code + tests) · **Placeholder** (director
 | `adr/0004-wsl2-docker-deferred-on-dev-laptop.md` | Why Docker-based infra is deferred *indefinitely* on this laptop (VBS/nested-virtualization conflict), not just until installed. |
 | `adr/0005-quality-pulled-into-mvp.md` | Why `edm-quality` was pulled forward from the V2 module list into the MVP. |
 | `adr/0006-lineage-pulled-into-mvp.md` | Why `edm-lineage` was pulled forward from the V2 module list into the MVP. |
+| `adr/0007-react-ui-and-cors-fix.md` | UI tech stack choices, and why `CORSMiddleware` had to be added to the backend (the UI was the first cross-origin browser client). |
 | `diagrams/` | Empty — reserved for diagram source files (excalidraw/mermaid/drawio) if/when needed. |
 
 ## `services/edm-platform/` — the application
@@ -55,8 +56,8 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 
 | File | What it does |
 |---|---|
-| `main.py` | Builds the FastAPI app, imports every module's models so `Base.metadata` is complete before table creation, mounts every router under `/api/v1`, and registers the `EdmError -> JSONResponse` exception handler. The single file that wires the whole monolith together. |
-| `config.py` | `Settings` (pydantic-settings) — reads `.env` for `DATABASE_URL`, `DATA_DIR`, `JWT_SECRET`, `EVENT_BUS`, etc. One instance, created at import time (see the test-isolation note in `tests/conftest.py` below for why that matters). |
+| `main.py` | Builds the FastAPI app, imports every module's models so `Base.metadata` is complete before table creation, mounts every router under `/api/v1`, registers `CORSMiddleware` (added once `edm-ui` made the first cross-origin browser request — ADR-0007), and registers the `EdmError -> JSONResponse` exception handler. The single file that wires the whole monolith together. |
+| `config.py` | `Settings` (pydantic-settings) — reads `.env` for `DATABASE_URL`, `DATA_DIR`, `JWT_SECRET`, `EVENT_BUS`, `CORS_ORIGINS`, etc. One instance, created at import time (see the test-isolation note in `tests/conftest.py` below for why that matters). |
 | `database.py` | SQLAlchemy `engine`/`SessionLocal`/`Base`, and the `get_db` FastAPI dependency every router uses. |
 | `events.py` | The in-process event bus (`publish`/`subscribe`) — logs every event and is the swap point for a real Kafka producer later (ADR-0003). Topic names match `02-domain-model.md` Section 5. |
 | `deps.py` | `get_current_user` — decodes the bearer token and loads the `User`, used by every authenticated route. |
@@ -185,6 +186,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `test_quality.py` | A `blocking` rule failure rejects the batch and leaves the previously published dataset's row count unchanged; a `warning` rule failure still publishes but flags `qualityOutcome`. |
 | `test_storage_adapter.py` | `save_raw_upload` strips path components from a client-supplied filename (the bug the CLI caught, plus an explicit traversal-attempt case). |
 | `test_lineage.py` | A dataset's lineage correctly names its source and pipeline as upstream (and vice versa downstream); reruns append a new edge per job rather than replacing the old one. |
+| `test_cors.py` | The configured UI origin gets `Access-Control-Allow-Origin` on preflight; an arbitrary origin doesn't. Regression test for the bug `edm-ui`'s first real run caught. |
 
 ### Other files in `services/edm-platform/`
 
@@ -203,6 +205,33 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. |
 | `pyproject.toml` | Packages `edm_cli` and registers the `edm` console-script entry point. |
 | `README.md` | Install steps, the golden path as CLI commands, and why this exists (it's what caught the path-handling bug in `app/modules/storage/adapter.py` — see `docs/16-build-roadmap.md`). |
+
+## `ui/` — the web client (`edm-ui`)
+
+Vite + React + TypeScript, per [ADR-0007](adr/0007-react-ui-and-cors-fix.md). One page per route;
+no UI component library (plain CSS in `src/index.css`).
+
+| File | What it does |
+|---|---|
+| `src/api/client.ts` | The axios instance every API call goes through — a request interceptor injects the bearer token from `localStorage`, a response interceptor turns any error into `ApiError` with the server's `detail` message. |
+| `src/api/types.ts` | TypeScript interfaces mirroring every backend Pydantic schema (`Workspace`, `Source`, `Pipeline`, `Job`, `Dataset`, `QualityRule`, `LineageGraph`, etc.). |
+| `src/api/endpoints.ts` | One typed async function per backend endpoint, grouped by resource in a single file (kept as one file deliberately — splitting into ten near-empty files wasn't worth the navigation overhead at this size). |
+| `src/context/AuthContext.tsx` | `login`/`register`/`logout` + the current `User`; token persisted to `localStorage`, rehydrated via `whoami()` on load. |
+| `src/components/ProtectedRoute.tsx` | Redirects to `/login` when there's no authenticated user; everything under it assumes `useAuth()` returns a real user. |
+| `src/components/Layout.tsx` | The header/nav shell every authenticated page renders inside. |
+| `src/components/StatusBadge.tsx` | Color-codes the status strings the backend returns (`succeeded`/`failed`/`passed_with_warnings`/etc.) consistently everywhere they appear. |
+| `src/components/ErrorBanner.tsx` | Renders an `ApiError` (or any thrown error) as a one-line banner; every mutation's `error` state gets passed straight to this. |
+| `src/pages/LoginPage.tsx`, `RegisterPage.tsx` | Auth forms; redirect to `/workspaces` on success. |
+| `src/pages/WorkspacesPage.tsx` | List the caller's workspaces (membership-filtered by the backend, not the UI), create a new one. |
+| `src/pages/WorkspaceDetailPage.tsx` | Projects (list + create) and members (list + add, owner-only enforced server-side) for one workspace. |
+| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for file connectors, inline `connection_config` fields for `sqlite`) and a Pipelines tab (create, with an inline repeatable transformation-step builder — type dropdown + a raw JSON `parameters` field per step). |
+| `src/pages/PipelineDetailPage.tsx` | Transformation list, a "Run pipeline" button, and job history (status, rows in/out, quality outcome, link to the produced dataset) — polls while a job is `running`/`queued`. |
+| `src/pages/CatalogPage.tsx` | Dataset search (by name substring, optionally scoped to a project via `?project_id=`). |
+| `src/pages/DatasetDetailPage.tsx` | Everything about one dataset in one place: schema, tags + classification (editable), data quality (add/remove rules, run history), lineage (upstream/downstream), and a SQL query runner against it — one component per concern (`SchemaSection`, `TagsAndClassificationSection`, `QualitySection`, `LineageSection`, `QuerySection`). |
+| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, pipeline (with transformations), run, view dataset, tag, classify, add a quality rule, check lineage, run a query — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
+| `package.json` | `npm run dev`/`build`/`e2e`/`e2e:install`. Dependencies: `react-router-dom` (routing), `@tanstack/react-query` (server-state caching/mutations), `axios` (HTTP). Dev-only: `playwright` (e2e), `vite`, `typescript`. |
+| `.env.example` | `VITE_API_URL`, defaulting to `http://localhost:8000/api/v1`. |
+| `README.md` | Run instructions, route map, e2e instructions, and the CORS bug story. |
 
 ## `infrastructure/docker/docker-compose.yml`
 

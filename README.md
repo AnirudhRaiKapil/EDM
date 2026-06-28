@@ -4,7 +4,7 @@
 data platform: ingestion, ETL/ELT, lakehouse storage, catalog, governance, data quality, and
 query, unified behind one product (API + UI + CLI), not a pile of disconnected open-source tools.
 
-The MVP backend is implemented and tested end to end. Start here:
+The MVP backend, a web UI, and a CLI are implemented and tested end to end. Start here:
 
 | Doc | What it covers |
 |---|---|
@@ -27,8 +27,8 @@ copy .env.example .env
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
 
-Then drive it with the CLI (`cli/README.md`) or `curl` — see `services/edm-platform/README.md`
-for the full golden path.
+Then drive it with the web UI (`ui/README.md`, `npm install && npm run dev`), the CLI
+(`cli/README.md`), or `curl` — see `services/edm-platform/README.md` for the full golden path.
 
 ## Core constraint
 
