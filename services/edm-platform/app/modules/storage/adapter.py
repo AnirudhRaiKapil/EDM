@@ -31,7 +31,8 @@ class LocalDiskStorageAdapter(StorageAdapter):
         return self.root / relative_path
 
     def save_raw_upload(self, source_id: str, filename: str, content: bytes) -> str:
-        relative_path = f"raw/{source_id}/{filename}"
+        safe_filename = Path(filename).name  # strip any client-supplied path components
+        relative_path = f"raw/{source_id}/{safe_filename}"
         full_path = self.absolute_path(relative_path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         full_path.write_bytes(content)

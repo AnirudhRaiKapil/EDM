@@ -60,4 +60,8 @@ The MVP module list (`auth`, `workspace`, `source`, `ingestion`, `pipeline`, `jo
 end to end (register → workspace/project → source → upload → pipeline → job → catalog → query),
 with workspace-scoped RBAC, dataset tagging/classification, a SQLite ingestion connector
 alongside CSV/JSON, and `edm-quality` (pulled forward from V2 — [ADR-0005](adr/0005-quality-pulled-into-mvp.md))
-all implemented and tested on top of that slice.
+all implemented and tested on top of that slice. `edm-cli` (`cli/`) is implemented as a thin
+client over the same API and was used to drive the full golden path by hand — that exercise
+caught and fixed a real path-handling bug in the upload flow that the test suite alone had
+missed. `edm-lineage`, `edm-governance` (beyond RBAC), `edm-notification`/`edm-alerting`,
+`edm-monitoring`, `edm-ai`, the SDK, and the UI remain unbuilt.
