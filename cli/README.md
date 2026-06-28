@@ -63,13 +63,22 @@ edm alert list --project-id <id>
 edm alert acknowledge --alert-id <id>
 edm alert resolve --alert-id <id>
 
+# Notification channels: every Alert on the project fans out to these (ADR-0011)
+edm notification create --project-id <id> --type webhook --url https://hooks.example.com/edm
+edm notification create --project-id <id> --type email --to-address oncall@example.com
+edm notification list --project-id <id>
+
+# Audit log: immutable record of logins, role/credential/schedule changes (ADR-0011)
+edm audit workspace --workspace-id <id>   # owner-only
+edm audit me                              # your own login/registration history
+
 edm query --dataset-id <id> --sql "SELECT * FROM dataset LIMIT 10"
 ```
 
 Run `edm --help` or `edm <group> --help` for the full command list (`auth`, `workspace`,
 `project`, `source`, `pipeline`, `notebook`, `job`, `catalog`, `quality`, `lineage`, `alert`,
-`query`). All output is JSON; errors print a one-line message and exit non-zero, so the CLI is
-scriptable.
+`audit`, `notification`, `query`). All output is JSON; errors print a one-line message and exit
+non-zero, so the CLI is scriptable.
 
 ## Why a CLI before a UI
 

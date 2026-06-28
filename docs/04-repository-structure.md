@@ -44,10 +44,11 @@ edm-platform/                  (this repo)
 │           ├── core/        ├── auth/        ├── workspace/     ├── source/
 │           ├── ingestion/    ├── pipeline/    ├── notebook/      ├── job/
 │           ├── storage/      ├── catalog/     ├── metadata/      ├── quality/
-│           ├── lineage/      ├── alerting/    └── query/
-│               (edm-governance beyond RBAC, edm-notification, edm-monitoring, edm-audit,
-│                edm-ai remain unbuilt V2 modules — see 17-codebase-map.md, kept current per
-│                Rule 11, for what's actually built)
+│           ├── lineage/      ├── alerting/    ├── notification/  ├── audit/
+│           └── query/
+│               (edm-governance beyond dataset classification + PII-masking heuristic,
+│                edm-monitoring, edm-ai remain unbuilt V2 modules — see 17-codebase-map.md,
+│                kept current per Rule 11, for what's actually built)
 │
 ├── ui/                                         edm-ui (React + TypeScript) — not yet built
 ├── sdk/                                         edm-sdk (client libraries) — not yet built

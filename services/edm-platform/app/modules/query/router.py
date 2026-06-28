@@ -19,6 +19,6 @@ def query(
     current_user: User = Depends(get_current_user),
 ):
     dataset = get_dataset(db, payload.dataset_id)
-    require_project_access(db, current_user.id, dataset.project_id)
-    columns, rows = service.run_query(dataset, payload.sql)
+    role = require_project_access(db, current_user.id, dataset.project_id)
+    columns, rows = service.run_query(dataset, payload.sql, role)
     return QueryResponse(columns=columns, rows=rows, row_count=len(rows))

@@ -2,11 +2,13 @@
 
 The MVP modular monolith: `edm-core`, `edm-auth`, `edm-workspace`, `edm-source`,
 `edm-ingestion`, `edm-pipeline`, `edm-notebook`, `edm-job`, `edm-storage`, `edm-catalog`,
-`edm-metadata`, `edm-quality`, `edm-lineage`, `edm-alerting`, and `edm-query` as internal Python
-packages behind one FastAPI app (`edm-quality`, `edm-lineage`, and `edm-alerting` were originally
-scoped as V2 in 01-product-architecture.md but were each pulled forward because they served
-explicit, heavily-emphasized requirements in 00-vision-and-requirements.md — see
-ADR-0005/0006/0008; `edm-notebook` wasn't in the original module map at all — see ADR-0010). See
+`edm-metadata`, `edm-quality`, `edm-lineage`, `edm-alerting`, `edm-notification`, `edm-audit`, and
+`edm-query` as internal Python packages behind one FastAPI app (`edm-quality`, `edm-lineage`,
+`edm-alerting`, `edm-notification`, and `edm-audit` were originally scoped as V2 (or, for
+`edm-audit`, present in the entity catalog but unbuilt) in 01-product-architecture.md but were
+each pulled forward because they served explicit, heavily-emphasized requirements in
+00-vision-and-requirements.md — see ADR-0005/0006/0008/0011; `edm-notebook` wasn't in the
+original module map at all — see ADR-0010). See
 [ADR-0002](../../docs/adr/0002-python-fastapi-modular-monolith.md) and
 [ADR-0003](../../docs/adr/0003-trimmed-phase-1-stack.md) for why, and
 [02-domain-model.md](../../docs/02-domain-model.md) for the entities these modules implement.
@@ -108,11 +110,52 @@ toward a dataset is preserved, not just the latest. Multi-hop dataset-to-dataset
 Gold pipeline consuming a Silver dataset) isn't representable yet — `Pipeline.source_id` only
 points at a `Source` today, not at another `Dataset`.
 
-### Alerting (`app/modules/alerting/`)
+### Alerting (`app/modules/alerting/`) and notifications (`app/modules/notification/`) — ADR-0008/0011
 `edm-job` raises an `Alert` directly (not via the event bus — see ADR-0008) whenever a run fails
 for any reason, or succeeds with `qualityOutcome: "passed_with_warnings"`. List a project's
 alerts via `GET /projects/{id}/alerts` (optional `?status=open|acknowledged|resolved`), triage
 via `PATCH /alerts/{id}` with `{"status": "acknowledged"|"resolved"|"open"}`.
+
+Every Alert fans out to that project's enabled notification channels:
+`POST /api/v1/projects/{id}/notification-channels` `{"type": "webhook"|"email", "config": {...}}`
+(`{"url": "..."}` for webhook, `{"to_address": "..."}` for email — SMTP server settings are
+operator-level `.env` config, not per-channel). A channel failing to deliver is logged and
+skipped, never raised — it can't fail the request that triggered the alert.
+
+### Audit log (`app/modules/audit/`) — ADR-0011
+An immutable, append-only record of security-sensitive actions: registration, login
+success/failure, role assignment, a source's credentials being set (connector type only, never
+the credential value), and pipeline schedule changes. `GET /workspaces/{id}/audit-events`
+(owner-only) and `GET /users/me/audit-events` (anyone, about themselves — useful for "has anyone
+been trying to log into my account," since a failed login against your email is recorded even if
+it never matched a real account).
+
+## Security (ADR-0011)
+- **Auth:** PBKDF2-HMAC-SHA256 at 600,000 rounds (iteration count embedded in the stored hash, so
+  a future increase doesn't invalidate existing ones); a timing-safe login check (a "no such
+  user" lookup costs the same as a "wrong password" one, so response timing can't be used to
+  enumerate valid emails); a 10-128 character password length bound; `/auth/login` and
+  `/auth/register` are rate-limited by both client IP and target email (`app/rate_limit.py`,
+  in-process only — no shared backend across multiple server instances).
+- **Query endpoint:** datasets are loaded through the storage adapter (pandas) and handed to
+  DuckDB via `register()`, never through a DuckDB SQL function; the connection a caller's SQL runs
+  on has `enable_external_access=False`, which blocks `read_csv`/`read_parquet`/`ATTACH`/
+  `COPY ... TO`/extension installation/direct URL scans. An earlier version of this endpoint let
+  `SELECT * FROM read_csv('/path/to/.env')` actually read arbitrary local files — see ADR-0011 for
+  the full writeup of that finding and the fix.
+- **Uploads:** capped at `MAX_UPLOAD_MB` (default 100), read in bounded chunks rather than
+  buffered into memory first and checked after.
+- **Headers:** every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `Cache-Control: no-store`.
+- **Startup check:** `app/main.py`'s lifespan logs a loud warning if `JWT_SECRET`/
+  `SECRET_ENCRYPTION_KEY` are still at their `.env.example` defaults or under 32 bytes.
+- **PII masking:** if a Dataset's `classification` includes `"pii"`, `POST /query` masks any
+  result column whose *name* matches a common PII pattern (`email`, `ssn`, `phone`, ...) for every
+  caller except the workspace owner. This is a name heuristic on top of existing dataset-level
+  classification, not real per-column governance (no column-tagging model exists yet).
+- A real `pip-audit` scan found and fixed 33 known vulnerabilities across `pyjwt`, `cryptography`,
+  `fastapi`/`starlette`, `python-multipart`, and `pytest` — see ADR-0011 for which were actually
+  exploitable in this codebase's usage vs. upgraded as a precaution.
 
 ## Tests
 
@@ -139,7 +182,23 @@ real in-memory `moto` S3 emulation; the rest against a mocked transport/connecti
 timeout, multi-cell state sharing); `test_notebook.py` covers the full notebook lifecycle
 including promote -> run -> query end to end; `test_scheduler.py` covers cron validation and
 schedule set/clear via the API (the actual cron *firing* was verified live against a running
-server, not in this suite — see ADR-0010).
+server, not in this suite — see ADR-0010); `test_security.py` covers the whole ADR-0011 pass end
+to end (the query-endpoint LFI fix, PII masking, password policy, timing-safe login, rate
+limiting, upload size limit, security headers, JWT tampering, an IDOR sweep); `test_audit.py`
+covers every audited action and the owner-only access rule on a workspace's log; `test_notification.py`
+covers webhook/email sending at the unit level (mocked transport/SMTP) and the full
+channel-create -> alert-fires -> delivery-attempted path, including that one channel's failure
+never blocks the alert or the job that triggered it.
+
+## Tested beyond pytest
+The ADR-0011 security fixes were also verified against a real running server, not just
+`TestClient`: the query-endpoint LFI attempt was tried through `edm-cli` against a live `uvicorn`
+process and confirmed blocked with a clean 422 (not a crash); the rate limiter was tripped with
+real concurrent `curl` requests and the resulting 429s and the audit trail of the failed attempts
+were both checked; the webhook channel was sent to and received `200 OK` from a real local
+`http.server`; the email channel was sent through `smtplib` to and successfully parsed by a real
+local `aiosmtpd` SMTP server (the same "field-verify if at all possible" standard ADR-0009 applied
+to S3 via `moto`).
 
 ## Swapping in real infrastructure later
 

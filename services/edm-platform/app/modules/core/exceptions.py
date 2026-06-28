@@ -22,5 +22,13 @@ class ValidationFailedError(EdmError):
     status_code = 422
 
 
+class PayloadTooLargeError(EdmError):
+    status_code = 413
+
+
+class TooManyRequestsError(EdmError):
+    status_code = 429
+
+
 class QualityCheckFailedError(EdmError):
     status_code = 422

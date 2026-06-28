@@ -35,8 +35,11 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
   section (set/clear a cron expression); `NotebookDetailPage.tsx` holds per-cell editors with
   run/delete controls and inline results, a "run all" button, and a promote-to-pipeline form
   (ADR-0010); `DatasetDetailPage.tsx` holds schema, tags, classification, data quality (rules +
-  run history), lineage, and a SQL query runner — every backend capability has a corresponding
-  place to use it from here.
+  run history), lineage, and a SQL query runner. `edm-audit` and `edm-notification` (ADR-0011)
+  have no dedicated page yet — `edm-cli`'s `audit`/`notification` commands are the only interface
+  to them today. PII column masking (ADR-0011) needed no UI changes at all: it happens server-side
+  on the query response itself, so the existing query runner in `DatasetDetailPage.tsx` already
+  shows masked values to a non-owner with zero changes on this side.
 
 ## Routes
 
@@ -68,7 +71,9 @@ npm run e2e             # in another — requires the backend running too
 ```
 
 Screenshots land in `e2e/shots/` (gitignored). Exits non-zero on failure or on any browser
-console error, so a passing run is a real signal, not just "it compiled."
+console error, so a passing run is a real signal, not just "it compiled." This now also runs on
+every push/PR via the `e2e` job in `.github/workflows/test.yml` (ADR-0011) — the steps above are
+for running it locally during development.
 
 This is how the CORS bug below was actually found — `curl`/`pytest` can't catch it, since CORS is
 a browser-enforced policy, not something a direct HTTP client ever encounters.

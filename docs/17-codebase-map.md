@@ -22,7 +22,7 @@ Status legend: **Built** (has working code + tests) · **Placeholder** (director
 | `integrations/` | Placeholder | Future home for connector definitions referenced by `edm-ingestion`, beyond what's inlined in `app/modules/ingestion/connectors.py` today. Nothing here yet. |
 | `examples/` | Placeholder | Future sample pipelines/source configs for demos. Nothing here yet. |
 | `tests/` (top level) | Placeholder | Reserved for cross-module/e2e tests per [04-repository-structure.md](04-repository-structure.md); all current tests live under `services/edm-platform/tests/` because there's only one module today. |
-| `.github/workflows/test.yml` | Built | CI: runs the full `services/edm-platform` pytest suite, installs `cli/` and smoke-checks `edm --help`, and runs `ui/`'s `tsc -b && vite build` — all on every push/PR to `main`. The UI's Playwright e2e suite is not in CI yet (see `ui/README.md`). |
+| `.github/workflows/test.yml` | Built | CI: runs the full `services/edm-platform` pytest suite, installs `cli/` and smoke-checks `edm --help`, runs `ui/`'s `tsc -b && vite build`, and (ADR-0011) an `e2e` job that starts both the backend and the Vite dev server in the background with a `curl`-retry readiness wait, runs `ui/e2e/smoke.mjs` against them, and uploads screenshots plus both servers' logs as artifacts on failure — all on every push/PR to `main`. |
 | `.claude/` | N/A | Claude Code tool settings for this workspace, not part of the platform itself. |
 
 ## `docs/`
@@ -58,14 +58,15 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 
 | File | What it does |
 |---|---|
-| `main.py` | Builds the FastAPI app, imports every module's models so `Base.metadata` is complete before table creation, mounts every router under `/api/v1`, registers `CORSMiddleware` (added once `edm-ui` made the first cross-origin browser request — ADR-0007), registers the `EdmError -> JSONResponse` exception handler, and (if `settings.enable_scheduler`) starts/stops the background pipeline scheduler in the FastAPI lifespan (ADR-0010). The single file that wires the whole monolith together. |
-| `config.py` | `Settings` (pydantic-settings) — reads `.env` for `DATABASE_URL`, `DATA_DIR`, `JWT_SECRET`, `EVENT_BUS`, `CORS_ORIGINS`, `ENABLE_SCHEDULER`, etc. One instance, created at import time (see the test-isolation note in `tests/conftest.py` below for why that matters). |
+| `main.py` | Builds the FastAPI app, imports every module's models so `Base.metadata` is complete before table creation, mounts every router under `/api/v1`, registers `CORSMiddleware` (added once `edm-ui` made the first cross-origin browser request — ADR-0007) and a small security-headers middleware (`X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy`/`Cache-Control` — ADR-0011), registers the `EdmError -> JSONResponse` exception handler, logs a loud warning at startup for any still-default/too-short secret (`settings.weak_secret_warnings()`, ADR-0011), and (if `settings.enable_scheduler`) starts/stops the background pipeline scheduler in the FastAPI lifespan (ADR-0010). The single file that wires the whole monolith together. |
+| `config.py` | `Settings` (pydantic-settings) — reads `.env` for `DATABASE_URL`, `DATA_DIR`, `JWT_SECRET`, `EVENT_BUS`, `CORS_ORIGINS`, `ENABLE_SCHEDULER`, `MAX_UPLOAD_MB`, `AUTH_RATE_LIMIT_*`, `SMTP_*`, etc. One instance, created at import time (see the test-isolation note in `tests/conftest.py` below for why that matters). `weak_secret_warnings()` flags default-value or under-32-byte secrets (ADR-0011). |
 | `database.py` | SQLAlchemy `engine`/`SessionLocal`/`Base`, and the `get_db` FastAPI dependency every router uses. |
 | `events.py` | The in-process event bus (`publish`/`subscribe`) — logs every event and is the swap point for a real Kafka producer later (ADR-0003). Topic names match `02-domain-model.md` Section 5. |
 | `deps.py` | `get_current_user` — decodes the bearer token and loads the `User`, used by every authenticated route. |
-| `permissions.py` | Cross-module authorization helpers (`require_project_access`, `require_source_access`, `require_pipeline_access`, `require_job_access`, `require_notebook_access`) that resolve a resource back to its owning Workspace and check the caller's `RoleAssignment`. This is the one file allowed to import service functions from multiple modules, because enforcing access control is inherently cross-cutting. |
+| `permissions.py` | Cross-module authorization helpers (`require_project_access`, `require_source_access`, `require_pipeline_access`, `require_job_access`, `require_notebook_access`, `require_notification_channel_access`) that resolve a resource back to its owning Workspace and check the caller's `RoleAssignment`. This is the one file allowed to import service functions from multiple modules, because enforcing access control is inherently cross-cutting. |
 | `secrets.py` | `encrypt_credentials`/`decrypt_credentials` — Fernet symmetric encryption keyed from `SECRET_ENCRYPTION_KEY`, used by `edm-source` to store real credentials (Oracle/S3/ServiceNow/Jira/Confluence) without Vault. See [ADR-0009](adr/0009-encrypted-secrets-and-enterprise-connectors.md). |
 | `sandbox.py` | `execute_code_cells(df, code_blocks)` — runs notebook/pipeline user-authored Python in a separate `multiprocessing` subprocess with a hard timeout, an import allowlist, and a restricted builtins namespace. Defense-in-depth against accidents, not a real security boundary — see [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md). Used by both `edm-notebook` (interactive dev) and the `python_code` pipeline transformation (scheduled/on-demand runs), so the exact same execution semantics apply in both places. |
+| `rate_limit.py` | `enforce_auth_rate_limit(request, email)` — an in-process sliding-window limiter on `/auth/login`/`/auth/register`, keyed by both client IP and target email. Single-process only (no Redis available — ADR-0003/0004); a real multi-instance deployment needs a shared backend for this to hold across instances. See [ADR-0011](adr/0011-security-hardening-audit-and-notifications.md). |
 | `scheduler.py` | A module-level APScheduler `BackgroundScheduler` singleton. `sync_schedule(pipeline_id, cron)` registers/replaces/removes a pipeline's cron job immediately; `start()`/`shutdown()` are called from `main.py`'s lifespan; the scheduled callback opens its own DB session (it runs outside any request) and calls `run_pipeline(..., trigger="scheduled")`. Gated by `settings.enable_scheduler` so the real scheduler thread never starts during tests (ADR-0010). |
 
 ### `app/modules/core/` — shared kernel, no HTTP surface
@@ -80,10 +81,10 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | File | What it does |
 |---|---|
 | `models.py` | `User`; `RoleAssignment` (binds a user to a `workspace`-scoped `owner`/`member` role — the MVP-scoped simplification of the full Role/Permission model in `02-domain-model.md`, documented inline and in ADR territory). |
-| `security.py` | Password hashing (stdlib PBKDF2-HMAC, no extra native dependency) and JWT issue/decode (PyJWT, HS256). |
-| `schemas.py` | `UserCreate`, `UserLogin`, `UserRead`, `Token`. |
-| `service.py` | Register/authenticate users; `assign_workspace_role`, `get_workspace_role`, `require_workspace_role` (404s if you're not a member at all — doesn't leak existence — 403s if you are a member but lack the right role), `list_workspace_members`, `list_user_workspace_ids`. |
-| `router.py` | `POST /auth/register`, `POST /auth/login`, `GET /users/me`. |
+| `security.py` | Password hashing (stdlib PBKDF2-HMAC, 600,000 rounds — OWASP 2023 guidance, ADR-0011) and JWT issue/decode (PyJWT, HS256). The iteration count is embedded in the stored hash (`"{iterations}${salt}${digest}"`) so a future increase doesn't invalidate already-stored hashes. `DUMMY_HASH` is a fixed, valid-shaped hash with no real password behind it, used to keep a "no such user" login check costing the same as a "wrong password" one (ADR-0011). |
+| `schemas.py` | `UserCreate` (password length-bounded 10-128 chars, ADR-0011), `UserLogin`, `UserRead`, `Token`. |
+| `service.py` | Register/authenticate users (both now write an `edm-audit` event — `user.registered`/`user.login_succeeded`/`user.login_failed` — and `authenticate_user` always runs a PBKDF2 check, even against `DUMMY_HASH`, to avoid a timing side-channel that would otherwise let an attacker enumerate valid emails — ADR-0011); `assign_workspace_role` (also audited as `role.assigned`), `get_workspace_role`, `require_workspace_role` (404s if you're not a member at all — doesn't leak existence — 403s if you are a member but lack the right role), `list_workspace_members`, `list_user_workspace_ids`. |
+| `router.py` | `POST /auth/register`, `POST /auth/login` (both rate-limited — `app/rate_limit.py`, ADR-0011), `GET /users/me`. |
 
 ### `app/modules/workspace/` — tenancy
 
@@ -100,7 +101,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `models.py` | `Source` — `connector_type`, `connection_config` (JSON, non-secret only per the domain model's `Source.connectionConfig`/`secretRef` split), `encrypted_credentials` (Fernet ciphertext, ADR-0009), `raw_file_path` for file-based connectors. `has_credentials` is a Python `@property` (`encrypted_credentials is not None`), not a column — lets `SourceRead`'s `from_attributes` pick it up with no extra plumbing while never exposing the ciphertext itself. |
 | `schemas.py` | `SUPPORTED_CONNECTOR_TYPES` (9 types — file-based csv/json, plus sqlite/oracle/s3/rest_api/servicenow/jira/confluence); `SourceCreate` (accepts an optional `credentials` dict, write-only); `SourceRead` (exposes `has_credentials: bool`, never the credentials themselves). |
-| `service.py` | Create/list/get a Source; delegates connection_config/credential shape validation to `app.modules.ingestion.specs.validate_connector_config` (shared with the ingestion module so the two can't drift apart); encrypts `credentials` via `app.secrets.encrypt_credentials` before storing. `attach_raw_file` after an upload. |
+| `service.py` | Create/list/get a Source; delegates connection_config/credential shape validation to `app.modules.ingestion.specs.validate_connector_config` (shared with the ingestion module so the two can't drift apart); encrypts `credentials` via `app.secrets.encrypt_credentials` before storing, and records a `source.credentials_set` `edm-audit` event (the connector type only, never the credential values — ADR-0011). `attach_raw_file` after an upload. |
 | `router.py` | `POST/GET /projects/{id}/sources`, `GET /sources/{id}` — all permission-checked via `app/permissions.py`. |
 
 ### `app/modules/ingestion/` — turning a Source into a DataFrame
@@ -110,7 +111,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `specs.py` | Per-connector-type validation (`validate_connector_config`) — what `connection_config`/`credentials` keys each of sqlite/oracle/s3/rest_api/servicenow/jira/confluence requires. Shared by `edm-source` (create-time validation) and read implicitly by `connectors.py` (run-time field access), so the two can't define a field's requirements differently. |
 | `rest_client.py` | `fetch_paginated_records` — the generic engine behind `rest_api`/`servicenow`/`jira`/`confluence`: builds auth (bearer/basic/api_key_header), loops page-number or offset/limit pagination until a short page, extracts the records array via a dotted `records_path` into an arbitrary JSON response shape. Takes an injectable `client` param so tests can supply `httpx.MockTransport` instead of making real network calls. |
 | `connectors.py` | `load_source_dataframe(source)` dispatches by `connector_type`: `csv`/`json` read a previously-uploaded file; `sqlite`/`oracle` validate the query is `SELECT`-only and run it (oracle via `python-oracledb` thin mode — no Oracle Client install needed); `s3` reads an object via `boto3` (credentials optional — falls back to boto3's default chain); `rest_api`/`servicenow`/`jira`/`confluence` call `rest_client.fetch_paginated_records` with system-specific defaults (e.g. ServiceNow's `api/now/table/{table}` + `sysparm_offset`, Jira's `rest/api/3/search` + JQL, mapping Atlassian's `email`/`api_token` onto basic auth). See ADR-0009 for which of these are verified against a real system (only S3, via `moto`) vs. request-building logic only (the rest — no real account or Docker-based emulator available here). |
-| `router.py` | `POST /sources/{id}/upload` (multipart) — saves the file via the storage adapter and calls `attach_raw_file`. |
+| `router.py` | `POST /sources/{id}/upload` (multipart) — reads the file in bounded 1MB chunks via `_read_within_limit`, aborting with a 413 the moment `MAX_UPLOAD_MB` (default 100) is crossed, instead of buffering an unbounded upload into memory first and checking after (ADR-0011); saves the result via the storage adapter and calls `attach_raw_file`. |
 
 ### `app/modules/pipeline/` — declarative transform definitions
 
@@ -119,7 +120,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `models.py` | `Pipeline` (source, output dataset name/layer, version, status, `schedule_cron` — ADR-0010), `Transformation` (ordered steps, JSON parameters) — metadata-driven per Rule 4, not bespoke scripts. |
 | `transformations.py` | Seven transformation implementations: `standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`, and `python_code` (runs notebook-style code through `app.sandbox.execute_code_cells` — the same sandbox `edm-notebook` uses, so code promoted from a notebook behaves identically once scheduled; ADR-0010) — each a pure `(DataFrame, parameters) -> DataFrame` function, dispatched by `apply_transformation`. |
 | `schemas.py` | `TransformationCreate/Read`, `PipelineCreate/Read`, `PipelineScheduleUpdate`. |
-| `service.py` | Create/list/get a Pipeline, validating its source and transformation types up front; `set_schedule` validates the cron expression, persists `schedule_cron`, and calls `app.scheduler.sync_schedule`. |
+| `service.py` | Create/list/get a Pipeline, validating its source and transformation types up front; `set_schedule` validates the cron expression, persists `schedule_cron`, calls `app.scheduler.sync_schedule`, and records a `pipeline.schedule_set`/`pipeline.schedule_cleared` `edm-audit` event (ADR-0011). |
 | `router.py` | `POST/GET /projects/{id}/pipelines`, `GET /pipelines/{id}`, `PATCH /pipelines/{id}/schedule`. |
 
 ### `app/modules/job/` — pipeline execution
@@ -187,22 +188,51 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `models.py` | `Alert` — `project_id` (so listing is permission-checkable the same way as every other project-scoped resource), generic `source_entity_type`/`source_entity_id`, `severity` (`info`/`warning`/`critical`), `message`, `status` (`open`/`acknowledged`/`resolved`). |
 | `schemas.py` | `AlertRead`, `AlertStatusUpdate`. |
-| `service.py` | `create_alert` (publishes `alert.created`), `list_alerts` (optional `status` filter), `update_status`. Called directly from `edm-job`, not via the event bus — see [ADR-0008](adr/0008-alerting-pulled-into-mvp.md) for why. |
+| `service.py` | `create_alert` (publishes `alert.created`, then calls `notification.service.dispatch_alert` to fan out to the project's enabled channels — ADR-0011), `list_alerts` (optional `status` filter), `update_status`. Called directly from `edm-job`, not via the event bus — see [ADR-0008](adr/0008-alerting-pulled-into-mvp.md) for why. |
 | `router.py` | `GET /projects/{id}/alerts` (optional `?status=`), `PATCH /alerts/{id}` (`{"status": "acknowledged"\|"resolved"\|"open"}`). |
+
+### `app/modules/notification/` — alert delivery channels (ADR-0011)
+
+Explicitly out of scope at MVP time per [ADR-0008](adr/0008-alerting-pulled-into-mvp.md) ("alerts
+are in-app/API-only until edm-notification exists"); built in the security-focused pass instead.
+
+| File | What it does |
+|---|---|
+| `models.py` | `NotificationChannel` — project-scoped, `type` (`webhook`\|`email`), `config` (JSON: `{"url": ...}` or `{"to_address": ...}`), `enabled`. |
+| `schemas.py` | `NotificationChannelCreate`, `NotificationChannelRead`. |
+| `senders.py` | `send_webhook`/`send_email` — both take an injectable client/SMTP-class (same pattern as `ingestion/rest_client.py`) so tests can verify real request-building without a real network call or a real email. `send_email` is a silent no-op when `SMTP_HOST` isn't configured (a $0 deployment with no mail server is an expected state, not a misconfiguration). Delivery failures are the *caller's* job to catch — these raise normally. |
+| `service.py` | `create_channel`/`list_channels`/`get_channel`/`delete_channel`; `dispatch_alert(db, alert)` fans out to every enabled channel on the alert's project, catching and logging (never raising) any one channel's delivery failure so a broken webhook/SMTP config never fails the request that triggered the alert. |
+| `router.py` | `POST/GET /projects/{id}/notification-channels`, `DELETE /notification-channels/{id}`. |
+
+### `app/modules/audit/` — immutable security-action log (ADR-0011)
+
+In `02-domain-model.md`'s entity catalog since the original domain model; never implemented until
+this pass.
+
+| File | What it does |
+|---|---|
+| `models.py` | `AuditEvent` — `actor_user_id` (nullable: a failed login against an unknown email has no real actor), `subject_email` (the email a login attempt targeted, regardless of whether it resolved to a real actor), `workspace_id` (nullable: registration/login happen before any workspace), `action`, `entity_type`/`entity_id`, `event_metadata` (JSON, small action-specific context only — never a credential value), `created_at`. No update/delete function exists anywhere in the module — append-only by construction, not just convention. |
+| `schemas.py` | `AuditEventRead`. |
+| `service.py` | `record_event` (never raises on the caller's behalf — a recording bug must not fail the unrelated request that triggered it); `list_workspace_events`, `list_my_events` (matches on `actor_user_id == me OR subject_email == my email`, so "who's been trying to log into my account" is answerable even for attempts with no real actor). |
+| `router.py` | `GET /workspaces/{id}/audit-events` (owner-only — this log can reveal who has access to what and when credentials changed), `GET /users/me/audit-events` (any authenticated user, about themselves). |
+
+Hooked into `auth.service` (register, login success/failure, role assignment),
+`source.service` (credentials set — connector type only, never the values), and
+`pipeline.service` (schedule set/cleared).
 
 ### `app/modules/query/` — read access to published data
 
 | File | What it does |
 |---|---|
 | `schemas.py` | `QueryRequest` (`dataset_id`, `sql`), `QueryResponse` (`columns`, `rows`, `row_count`). |
-| `service.py` | `run_query` — rejects anything that isn't a `SELECT`, registers the dataset's Parquet file as a DuckDB view named `dataset`, executes the caller's SQL against it. DuckDB is the MVP substitute for Trino (ADR-0003). |
-| `router.py` | `POST /query` — the one query endpoint that *is* permission-checked (it returns real row data, unlike catalog search), resolved via the dataset's project. |
+| `service.py` | `run_query(dataset, sql, role)` — rejects anything that isn't a `SELECT`, loads the dataset's Parquet file through the storage adapter (pandas) and hands it to DuckDB via `connection.register("dataset", df)` rather than a DuckDB SQL function, then runs on a connection opened with `enable_external_access=False`. **Critical fix (ADR-0011):** the original version executed the caller's SQL on a connection that could still reach the filesystem/network — `SELECT * FROM read_csv('/path/to/.env')` actually worked, letting any authenticated caller read or exfiltrate arbitrary files on the server. Confirmed blocked now for `read_csv`/`read_parquet`/`ATTACH`/`COPY ... TO`/`INSTALL httpfs`/direct `https://` scans. A DuckDB exception (malformed query or a blocked primitive) is caught and converted to a 422 instead of propagating as a 500. After a successful query, `_mask_pii_columns` replaces any column whose name matches a PII pattern (`email`, `ssn`, `phone`, ...) with `"***MASKED***"` when the dataset's `classification` includes `"pii"` and the caller isn't the workspace owner — a name-heuristic stand-in for real column-level governance (ADR-0011). DuckDB is the MVP substitute for Trino (ADR-0003). |
+| `router.py` | `POST /query` — the one query endpoint that *is* permission-checked (it returns real row data, unlike catalog search), resolved via the dataset's project; the resolved role is passed into `run_query` to drive PII masking. |
 
 ### `services/edm-platform/tests/`
 
 | File | What it covers |
 |---|---|
-| `conftest.py` | The shared `client` fixture — gives every test a fresh SQLite DB and local data directory via FastAPI's `dependency_overrides` (not env vars: `Settings`/the engine are created once at import time, so per-test `monkeypatch.setenv` alone doesn't isolate tests within one pytest process — this fixture is the fix for a real bug that bug caused). Also disables the real APScheduler via `monkeypatch.setattr(settings, "enable_scheduler", False)` directly on the already-constructed `settings` object — an env var alone would be too late, for the same singleton-timing reason (ADR-0010). |
+| `conftest.py` | The shared `client` fixture — gives every test a fresh SQLite DB and local data directory via FastAPI's `dependency_overrides` (not env vars: `Settings`/the engine are created once at import time, so per-test `monkeypatch.setenv` alone doesn't isolate tests within one pytest process — this fixture is the fix for a real bug that bug caused). Also disables the real APScheduler and sets a 32+ byte JWT secret via `monkeypatch.setattr(settings, ...)` directly on the already-constructed `settings` object — an env var alone would be too late, for the same singleton-timing reason (ADR-0010/0011; the JWT secret one is a second instance of the *exact* same bug, found while investigating a stray `InsecureKeyLengthWarning` during the ADR-0011 dependency upgrade). Also resets `app.rate_limit`'s module-level attempt-tracking dict per test — the `TestClient` always reports the same fake client IP, so without resetting, attempts from earlier tests would accumulate and eventually trip the limiter for unrelated tests. |
 | `test_golden_path.py` | End-to-end: register -> workspace/project -> source -> upload -> pipeline -> job -> catalog -> query, for both a CSV source and a JSON source with `filter_rows`/`select_columns`. |
 | `test_rbac.py` | Workspace creator becomes owner; non-members get 404 (not 403, to avoid leaking existence) on every workspace-scoped resource; members gain access after being added but can't manage membership themselves. |
 | `test_transformations.py` | Unit tests for each of the seven transformation functions, including `python_code` and a regression test (`test_python_code_does_not_truncate_rows_past_preview_limit`) that locks in the full-data-vs-preview distinction described in ADR-0010. |
@@ -221,13 +251,16 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `test_sandbox.py` | The sandbox in isolation, before anything was built on top of it: DataFrame transforms, multi-cell state sharing, stdout capture, blocked imports/builtins, stop-at-first-failure, the hard timeout actually terminating the subprocess, and the "code must leave `df` bound" contract. |
 | `test_notebook.py` | Cells run in order against a sample (not the full source); `up_to_cell_id` stops early; a sandboxed error comes back as a normal 200 with `status: "error"`, not a 500; promote -> run -> query end-to-end (the full dedupe-and-scale scenario, asserting on the actual published rows); promoting with no cells is rejected; non-members get 404. |
 | `test_scheduler.py` | `validate_cron` accepts/rejects expressions; `sync_schedule` registers and removes an APScheduler job; the `PATCH /pipelines/{id}/schedule` endpoint persists and clears `schedule_cron` and rejects garbage cron strings; non-members can't set another project's schedule. (The actual cron *firing* is verified live against a running server in ADR-0010's work, not in this suite — see the backend README.) |
+| `test_security.py` | The ADR-0011 security pass, end to end through the API: the query-endpoint LFI fix (`read_csv`/`COPY ... TO` against an arbitrary local file are blocked, a legitimate `SELECT` still works), PII column masking (member sees `"***MASKED***"` on a `pii`-classified dataset's `email` column, owner sees the real value, an unclassified dataset is never masked), password length enforcement, the timing-safe login path (wrong-password and no-such-user return byte-identical error bodies), rate limiting (trips after the configured threshold, keyed by both IP and email), the upload size limit (413 past `MAX_UPLOAD_MB`), security response headers, JWT tampering (wrong signature, `alg: none`, malformed, missing — all 401), and an IDOR sweep across sources/pipelines/query for a non-member. |
+| `test_audit.py` | Register/login/failed-login are recorded against the right `actor_user_id`/`subject_email`; role assignment and a source's credentials being set are recorded (and the credential value never appears in the audit event); pipeline schedule set/clear are recorded; only the workspace owner can list a workspace's audit log, and a non-member can't at all. |
+| `test_notification.py` | Sender-level (no real network/SMTP): `send_webhook` posts the expected JSON payload and raises on an HTTP error; `send_email` delivers through a fake SMTP class (STARTTLS, login, message contents) and is a no-op when no `SMTP_HOST` is configured. API-level: channel create/list/delete, validation (a webhook needs a `url`, an email needs a `to_address`), non-members can't manage a project's channels, a real `create_alert` call dispatches to a registered webhook, and one channel raising an exception never prevents the alert (or the job that triggered it) from completing normally. |
 
 ### Other files in `services/edm-platform/`
 
 | File | What it does |
 |---|---|
-| `requirements.txt` | Pinned dependencies — all chosen to have prebuilt Windows wheels (no compiler needed): fastapi, uvicorn, sqlalchemy, pydantic-settings, email-validator, pyjwt, pandas, duckdb, pyarrow, python-multipart, httpx, cryptography, oracledb, boto3, apscheduler, pytest, moto. |
-| `.env.example` | Every setting `config.py` reads, with inline comments on what to change to swap in real Postgres/MinIO/Kafka later. `.env` itself is gitignored. |
+| `requirements.txt` | Pinned dependencies — all chosen to have prebuilt Windows wheels (no compiler needed): fastapi, uvicorn, sqlalchemy, pydantic-settings, email-validator, pyjwt, pandas, duckdb, pyarrow, python-multipart, httpx, cryptography, oracledb, boto3, apscheduler, pytest, moto. Versions are kept current against `pip-audit` (ADR-0011 fixed 33 known vulnerabilities across pyjwt/cryptography/fastapi+starlette/python-multipart/pytest); `pyarrow` is deliberately pinned older despite one open finding, since that finding's own advisory states the Python bindings aren't exposed to it. |
+| `.env.example` | Every setting `config.py` reads, with inline comments on what to change to swap in real Postgres/MinIO/Kafka later, including the ADR-0011 additions (`SECRET_ENCRYPTION_KEY`, `ENABLE_SCHEDULER`, `MAX_UPLOAD_MB`, `AUTH_RATE_LIMIT_*`) that earlier phases had left undocumented here despite already existing in `config.py` — a real doc-sync gap this pass also fixed. `.env` itself is gitignored. |
 | `README.md` | How to run locally, the golden path as literal `curl`-able steps, connector/transformation/quality-rule reference, test notes, and a no-migrations-yet warning (delete the dev DB after pulling a schema change). |
 
 ## `cli/` — the command-line client
@@ -236,7 +269,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `edm_cli/config.py` | Where credentials persist (`~/.edm/credentials.json`) and where the API base URL comes from (`EDM_API_URL` env var, default `localhost:8000`). |
 | `edm_cli/client.py` | `ApiClient` — injects the bearer token, raises `ApiError` with the server's `detail` message on any 4xx/5xx so the CLI can print something readable instead of a stack trace. `post()` accepts an optional `params` dict (needed for `notebook run --up-to-cell-id`, which is a query param on a POST). |
-| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `notebook`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. `source create --connector-type` covers all 9 types; `--connection-config`/`--credentials` take raw JSON strings (credentials encrypted server-side, never echoed back). `pipeline schedule --cron <expr>` / `--clear` sets/removes a cron schedule. `notebook create/list/get/add-cell/update-cell/delete-cell/run/promote` covers the full interactive-dev-to-scheduled-pipeline flow (ADR-0010). |
+| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `notebook`, `job`, `catalog`, `quality`, `lineage`, `alert`, `audit`, `notification`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. `source create --connector-type` covers all 9 types; `--connection-config`/`--credentials` take raw JSON strings (credentials encrypted server-side, never echoed back). `pipeline schedule --cron <expr>` / `--clear` sets/removes a cron schedule. `notebook create/list/get/add-cell/update-cell/delete-cell/run/promote` covers the full interactive-dev-to-scheduled-pipeline flow (ADR-0010). `audit workspace`/`audit me` and `notification create/list/delete` are the only interface to those two modules today — neither has a UI page yet (ADR-0011). |
 | `pyproject.toml` | Packages `edm_cli` and registers the `edm` console-script entry point. |
 | `README.md` | Install steps, the golden path as CLI commands, and why this exists (it's what caught the path-handling bug in `app/modules/storage/adapter.py` — see `docs/16-build-roadmap.md`). |
 

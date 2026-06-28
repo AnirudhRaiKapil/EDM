@@ -2,12 +2,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.events import publish
+from app.modules.audit import service as audit_service
 from app.modules.core.exceptions import NotFoundError, ValidationFailedError
 from app.modules.pipeline.models import Pipeline, Transformation
 from app.modules.pipeline.schemas import TransformationCreate
 from app.modules.pipeline.transformations import SUPPORTED_TRANSFORMATION_TYPES
 from app.modules.source.service import get_source
-from app.modules.workspace.service import get_project
+from app.modules.workspace.service import get_project, get_workspace_id_for_project
 
 
 def create_pipeline(
@@ -71,4 +72,12 @@ def set_schedule(db: Session, pipeline: Pipeline, cron_expression: str | None) -
     db.refresh(pipeline)
     sync_schedule(pipeline.id, cron_expression)
     publish("pipeline.schedule_updated", {"id": pipeline.id, "cron": cron_expression})
+    audit_service.record_event(
+        db,
+        "pipeline.schedule_set" if cron_expression else "pipeline.schedule_cleared",
+        workspace_id=get_workspace_id_for_project(db, pipeline.project_id),
+        entity_type="pipeline",
+        entity_id=pipeline.id,
+        metadata={"cron": cron_expression},
+    )
     return pipeline

@@ -100,6 +100,25 @@ Schedule section on the pipeline detail page) — all driven against a live back
 and UI flows verified by hand and via an extended `ui/e2e/smoke.mjs`, per this project's standing
 rule of verifying through a real interface rather than trusting `pytest`'s `TestClient` alone.
 
-`edm-governance` (beyond RBAC), `edm-notification`, `edm-monitoring`, `edm-ai`, and the SDK remain
-unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept current
-per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).
+A security-focused pass ([ADR-0011](adr/0011-security-hardening-audit-and-notifications.md))
+followed: a real `pip-audit` scan found and fixed 33 known vulnerabilities across 6 dependencies
+(including the JWT and crypto libraries and FastAPI's own ASGI framework); a hands-on review of
+the query endpoint found and fixed a **critical local file inclusion / exfiltration**
+vulnerability (`SELECT * FROM read_csv('/path/to/.env')` could read or write arbitrary files on
+the server through DuckDB's table functions — closed via `enable_external_access=False` plus
+loading datasets through pandas instead of a DuckDB SQL function); and auth gained a timing-safe
+login check, future-proofed PBKDF2 iteration storage, a password length policy, IP+email rate
+limiting, security response headers, and a bounded file-upload size limit. `edm-audit` (an
+immutable log of security-sensitive actions — logins, role/credential/schedule changes; in the
+domain model's entity catalog since the start, never built until now) and `edm-notification`
+(webhook + email alert delivery, explicitly deferred at MVP time by ADR-0008) were both pulled
+forward and built full-stack (backend + tests + `edm-cli` commands), verified against a real local
+webhook receiver and a real local SMTP server, not just mocks. A dataset-classification-driven PII
+column-masking heuristic was added to the query endpoint for non-owner roles. `ui/e2e/smoke.mjs`
+is now wired into CI (`.github/workflows/test.yml`) instead of being a manual-only check.
+
+`edm-governance` (beyond dataset classification and the PII-masking heuristic above — no real
+per-column tagging/policy engine), `slack`/`teams` notification channels, `edm-monitoring`,
+`edm-ai`, the SDK, and dedicated UI pages for `edm-audit`/`edm-notification` (CLI-only today)
+remain unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept
+current per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).

@@ -11,24 +11,28 @@ from app.modules.core.exceptions import EdmError
 
 # Import every module's models so Base.metadata is fully populated before create_all().
 from app.modules.alerting import models as alerting_models  # noqa: F401
+from app.modules.audit import models as audit_models  # noqa: F401
 from app.modules.auth import models as auth_models  # noqa: F401
 from app.modules.catalog import models as catalog_models  # noqa: F401
 from app.modules.job import models as job_models  # noqa: F401
 from app.modules.lineage import models as lineage_models  # noqa: F401
 from app.modules.metadata import models as metadata_models  # noqa: F401
 from app.modules.notebook import models as notebook_models  # noqa: F401
+from app.modules.notification import models as notification_models  # noqa: F401
 from app.modules.pipeline import models as pipeline_models  # noqa: F401
 from app.modules.quality import models as quality_models  # noqa: F401
 from app.modules.source import models as source_models  # noqa: F401
 from app.modules.workspace import models as workspace_models  # noqa: F401
 
 from app.modules.alerting.router import router as alerting_router
+from app.modules.audit.router import router as audit_router
 from app.modules.auth.router import router as auth_router
 from app.modules.catalog.router import router as catalog_router
 from app.modules.ingestion.router import router as ingestion_router
 from app.modules.job.router import router as job_router
 from app.modules.lineage.router import router as lineage_router
 from app.modules.notebook.router import router as notebook_router
+from app.modules.notification.router import router as notification_router
 from app.modules.pipeline.router import router as pipeline_router
 from app.modules.quality.router import router as quality_router
 from app.modules.query.router import router as query_router
@@ -36,11 +40,14 @@ from app.modules.source.router import router as source_router
 from app.modules.workspace.router import router as workspace_router
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("edm.security")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    for warning in settings.weak_secret_warnings():
+        logger.warning("INSECURE CONFIGURATION: %s", warning)
     if settings.enable_scheduler:
         from app import scheduler
 
@@ -62,6 +69,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # This is a JSON API with no served HTML, so XSS/clickjacking via this app's own
+    # pages isn't the threat -- these headers are about how *other* sites' pages and
+    # how browsers/proxies handle responses *from* this API.
+    response.headers["X-Content-Type-Options"] = "nosniff"  # block MIME-sniffing a JSON body as something executable
+    response.headers["X-Frame-Options"] = "DENY"  # this API is never meant to be framed
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cache-Control"] = "no-store"  # every response here is per-user/auth-scoped data
+    return response
+
 API_PREFIX = "/api/v1"
 for router in (
     auth_router,
@@ -76,6 +96,8 @@ for router in (
     lineage_router,
     alerting_router,
     notebook_router,
+    audit_router,
+    notification_router,
 ):
     app.include_router(router, prefix=API_PREFIX)
 

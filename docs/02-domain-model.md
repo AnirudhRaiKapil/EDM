@@ -30,7 +30,8 @@
 | Quality Run | `edm-quality` | The result of evaluating Quality Rules against a Dataset version |
 | Lineage Edge | `edm-lineage` | A directed edge recording that one Dataset/Job produced or consumed another |
 | Alert | `edm-alerting` | A notification triggered by an event or condition |
-| Audit Event | `edm-audit` | An immutable record of who did what, when |
+| Notification Channel | `edm-notification` | A webhook or email destination an Alert is delivered to (not implemented until [ADR-0011](adr/0011-security-hardening-audit-and-notifications.md); explicitly deferred at MVP time — [ADR-0008](adr/0008-alerting-pulled-into-mvp.md)) |
+| Audit Event | `edm-audit` | An immutable record of who did what, when (in the entity catalog from the start; implemented per [ADR-0011](adr/0011-security-hardening-audit-and-notifications.md)) |
 
 ## 2. Entity Definitions
 
@@ -256,11 +257,47 @@ The lineage graph is the union of all edges.
 | sourceEntity | (type, id) | what triggered it, e.g. a failed Job or Quality Run |
 | message | string | added beyond the original spec — the human-readable reason, since there's no `channel` to format a notification for yet |
 | severity | enum | `info`, `warning`, `critical` |
-| channel | enum | `email`, `slack`, `teams`, `webhook` — **not implemented in the MVP** (ADR-0008); alerts are in-app/API-only until `edm-notification` exists |
+| channel | enum | `email`, `slack`, `teams`, `webhook` — was **not implemented in the MVP** (ADR-0008); `email`/`webhook` now exist via `edm-notification`'s `NotificationChannel` below (`slack`/`teams` remain unbuilt). Delivery is fan-out to every enabled channel on the Alert's project, not a field on the Alert itself. |
 | status | enum | `open`, `acknowledged`, `resolved` |
 
+### Notification Channel
+*(Not in the original model — added per [ADR-0011](adr/0011-security-hardening-audit-and-notifications.md).)*
+A project-scoped destination an Alert is delivered to once created. Delivery failure (a dead
+webhook, a rejecting SMTP server) is always caught and logged, never raised — a broken channel
+must never fail the request that triggered the Alert it's attached to.
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | |
+| projectId | FK -> Project | |
+| type | enum | `webhook`, `email` |
+| config | JSON | `{"url": "..."}` for webhook, `{"to_address": "..."}` for email — SMTP server settings themselves are operator-level config (`SMTP_HOST` etc.), not per-channel |
+| enabled | bool | |
+| owner | User ref | |
+
 ### Audit Event
-Immutable: `(actorUserId, action, entityType, entityId, before, after, timestamp)`.
+*(In the entity catalog since the original domain model; implemented per
+[ADR-0011](adr/0011-security-hardening-audit-and-notifications.md).)*
+Immutable — no update/delete function exists. Implemented as `(actorUserId, subjectEmail,
+workspaceId, action, entityType, entityId, eventMetadata, createdAt)`, not the originally-sketched
+`(actorUserId, action, entityType, entityId, before, after, timestamp)`: `before`/`after` full
+snapshots were deliberately dropped in favor of a small `eventMetadata` JSON blob (e.g. just
+`{"role": "member"}` for a role change) — duplicating entire before/after object states into a
+second store is its own data-exposure surface, and every action recorded so far is small enough
+that "what happened" doesn't need a full snapshot to be useful. `subjectEmail` was added because
+`actorUserId` alone can't represent a failed login against an email with no matching account —
+there's no real actor, but the attempt is still attributable to *that email*.
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | |
+| actorUserId | FK -> User, nullable | null for a login attempt against an email with no account |
+| subjectEmail | string, nullable | the email a login attempt targeted, regardless of whether it resolved to a real actor |
+| workspaceId | FK -> Workspace, nullable | null for actions with no workspace yet (registration, login) |
+| action | string | e.g. `user.login_failed`, `role.assigned`, `source.credentials_set`, `pipeline.schedule_set` |
+| entityType, entityId | string, string, both nullable | what the action was about, when applicable |
+| eventMetadata | JSON | small, action-specific context only — never a credential value or other secret |
+| createdAt | datetime | |
 
 ## 3. Relationship Overview
 
@@ -272,6 +309,7 @@ Project   1───* Source
 Project   1───* Pipeline
 Project   1───* Dataset
 Project   1───* Notebook
+Project   1───* NotificationChannel
 
 Source    *───1 Connector       (Source is a configured instance of a Connector type)
 Source    1───* Notebook        (a Notebook samples exactly one Source)
@@ -285,6 +323,8 @@ Notebook  0..1───1 Pipeline     (promotedPipelineId, once promoted)
 Job       *───1 Cluster
 Job       1───* QualityRun      (quality checks tied to the data a Job produced)
 Job       1───* Alert           (on failure / SLA breach)
+Alert     *───* NotificationChannel  (fan-out delivery, not a stored edge -- every
+                                      enabled channel on the Alert's project is tried)
 
 Dataset   1───* Schema          (version history, exactly one `active`)
 Schema    1───* Column

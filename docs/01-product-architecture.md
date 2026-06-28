@@ -177,15 +177,15 @@ MVP.
 | `edm-quality` | Validation rules, evaluated on every job run before publication. Pulled forward from V2 — see [ADR-0005](adr/0005-quality-pulled-into-mvp.md) |
 | `edm-lineage` | Source/pipeline -> dataset edges recorded on every job run. Pulled forward from V2 — see [ADR-0006](adr/0006-lineage-pulled-into-mvp.md) |
 | `edm-alerting` | Alerts raised directly by `edm-job` on failure/quality-warning; open/acknowledged/resolved lifecycle. Pulled forward from V2 — see [ADR-0008](adr/0008-alerting-pulled-into-mvp.md) |
+| `edm-notification` | Webhook and email delivery channels an Alert fans out to. Explicitly deferred at MVP time (ADR-0008: "not implemented... until edm-notification exists"), then pulled forward — see [ADR-0011](adr/0011-security-hardening-audit-and-notifications.md). `slack`/`teams` channels remain unbuilt. |
+| `edm-audit` | Immutable log of security-sensitive actions (logins, role/credential/schedule changes). In the entity catalog since the original domain model; pulled forward — see [ADR-0011](adr/0011-security-hardening-audit-and-notifications.md) |
 
 ### Enterprise (V2)
 
 | Module | Responsibility |
 |---|---|
-| `edm-governance` | Policies, retention, classification |
-| `edm-notification` | Email, Slack, Teams, webhooks |
+| `edm-governance` | Policies, retention, classification. Partially pulled forward: dataset-level classification and a name-pattern PII masking heuristic on top of it exist (ADR-0011); a real per-column tagging/policy engine does not. |
 | `edm-monitoring` | Metrics, health checks, SLAs |
-| `edm-audit` | Immutable audit trail |
 | `edm-ai` | Copilot, NL-to-SQL, pipeline recommendations |
 
 ### Interfaces
@@ -230,6 +230,8 @@ Pipeline Service -> Kafka -> Job Service -> Metadata Service -> Notification Ser
 /api/v1/query
 /api/v1/quality
 /api/v1/governance
+/api/v1/notification-channels
+/api/v1/audit-events
 
 /api/v1/admin
 /api/v1/monitoring

@@ -2,11 +2,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.events import publish
+from app.modules.audit import service as audit_service
 from app.modules.core.exceptions import NotFoundError, ValidationFailedError
 from app.modules.ingestion.specs import validate_connector_config
 from app.modules.source.models import Source
 from app.modules.source.schemas import SUPPORTED_CONNECTOR_TYPES
-from app.modules.workspace.service import get_project
+from app.modules.workspace.service import get_project, get_workspace_id_for_project
 from app.secrets import encrypt_credentials
 
 
@@ -40,6 +41,15 @@ def create_source(
     db.commit()
     db.refresh(source)
     publish("source.created", {"id": source.id, "projectId": project_id, "name": name})
+    if credentials:
+        audit_service.record_event(
+            db,
+            "source.credentials_set",
+            workspace_id=get_workspace_id_for_project(db, project_id),
+            entity_type="source",
+            entity_id=source.id,
+            metadata={"connector_type": connector_type},  # never the credential values themselves
+        )
     return source
 
 

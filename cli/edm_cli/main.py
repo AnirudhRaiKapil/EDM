@@ -526,6 +526,67 @@ def alert_resolve(alert_id):
     echo_json(ApiClient().patch(f"/alerts/{alert_id}", json={"status": "resolved"}))
 
 
+# --- audit ------------------------------------------------------------------
+
+@cli.group()
+def audit():
+    """Immutable log of security-sensitive actions (logins, credential changes,
+    role/schedule changes)."""
+
+
+@audit.command("workspace")
+@click.option("--workspace-id", required=True)
+@click.option("--limit", default=100, type=int)
+@handle_errors
+def audit_workspace(workspace_id, limit):
+    echo_json(ApiClient().get(f"/workspaces/{workspace_id}/audit-events", params={"limit": limit}))
+
+
+@audit.command("me")
+@click.option("--limit", default=100, type=int)
+@handle_errors
+def audit_me(limit):
+    echo_json(ApiClient().get("/users/me/audit-events", params={"limit": limit}))
+
+
+# --- notification -------------------------------------------------------------
+
+@cli.group()
+def notification():
+    """Webhook/email channels that fire when an Alert is created."""
+
+
+@notification.command("create")
+@click.option("--project-id", required=True)
+@click.option("--type", "channel_type", required=True, type=click.Choice(["webhook", "email"]))
+@click.option("--url", default=None, help="Required for --type webhook.")
+@click.option("--to-address", default=None, help="Required for --type email.")
+@handle_errors
+def notification_create(project_id, channel_type, url, to_address):
+    config = {"url": url} if channel_type == "webhook" else {"to_address": to_address}
+    echo_json(
+        ApiClient().post(
+            f"/projects/{project_id}/notification-channels",
+            json={"type": channel_type, "config": config},
+        )
+    )
+
+
+@notification.command("list")
+@click.option("--project-id", required=True)
+@handle_errors
+def notification_list(project_id):
+    echo_json(ApiClient().get(f"/projects/{project_id}/notification-channels"))
+
+
+@notification.command("delete")
+@click.option("--channel-id", required=True)
+@handle_errors
+def notification_delete(channel_id):
+    ApiClient().delete(f"/notification-channels/{channel_id}")
+    click.echo("Channel deleted")
+
+
 # --- query ----------------------------------------------------------------
 
 @cli.command("query")

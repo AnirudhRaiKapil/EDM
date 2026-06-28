@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.events import publish
 from app.modules.alerting.models import Alert
 from app.modules.core.exceptions import NotFoundError, ValidationFailedError
+from app.modules.notification.service import dispatch_alert
 
 SEVERITIES = ["info", "warning", "critical"]
 STATUSES = ["open", "acknowledged", "resolved"]
@@ -31,6 +32,7 @@ def create_alert(
         "alert.created",
         {"id": alert.id, "projectId": project_id, "severity": severity, "message": message},
     )
+    dispatch_alert(db, alert)
     return alert
 
 
