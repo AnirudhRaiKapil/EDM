@@ -27,6 +27,7 @@ def create_source(
         payload.connector_type,
         payload.ingestion_mode,
         payload.connection_config,
+        payload.credentials,
     )
 
 

@@ -77,6 +77,25 @@ try {
   await page.waitForSelector("text=raw/");
   await shot(page, "source-file-uploaded");
 
+  // A non-file connector type, to exercise the generic connection_config/credentials
+  // JSON fields (oracle/s3/rest_api/servicenow/jira/confluence all share this form).
+  await page.fill('input[placeholder="Source name"]', "oracle-customers");
+  await page.selectOption(".tabs ~ div form select", "oracle");
+  await page.fill(
+    'textarea[placeholder*="connection_config"]',
+    '{"host": "db.internal", "port": 1521, "service_name": "ORCL", "table": "customers"}',
+  );
+  await page.fill(
+    'textarea[placeholder*="credentials"]',
+    '{"username": "admin", "password": "do-not-leak-me"}',
+  );
+  await page.click('button:has-text("Create source")');
+  await page.waitForSelector("text=stored (encrypted)");
+  await shot(page, "oracle-source-created");
+  if ((await page.content()).includes("do-not-leak-me")) {
+    throw new Error("credential leaked into the page");
+  }
+
   await page.click('button:has-text("Pipelines")');
   await page.waitForSelector('input[placeholder="Pipeline name"]');
 

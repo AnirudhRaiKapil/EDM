@@ -31,7 +31,18 @@ export interface Project {
   created_at: string;
 }
 
-export type ConnectorType = "csv" | "json" | "sqlite";
+export type ConnectorType =
+  | "csv"
+  | "json"
+  | "sqlite"
+  | "oracle"
+  | "s3"
+  | "rest_api"
+  | "servicenow"
+  | "jira"
+  | "confluence";
+
+export const FILE_BASED_CONNECTOR_TYPES: ConnectorType[] = ["csv", "json"];
 
 export interface Source {
   id: string;
@@ -42,6 +53,7 @@ export interface Source {
   status: string;
   raw_file_path: string | null;
   connection_config: Record<string, unknown> | null;
+  has_credentials: boolean;
   owner_id: string;
   created_at: string;
 }

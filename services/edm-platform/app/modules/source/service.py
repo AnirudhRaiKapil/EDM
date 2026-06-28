@@ -3,18 +3,11 @@ from sqlalchemy.orm import Session
 
 from app.events import publish
 from app.modules.core.exceptions import NotFoundError, ValidationFailedError
+from app.modules.ingestion.specs import validate_connector_config
 from app.modules.source.models import Source
 from app.modules.source.schemas import SUPPORTED_CONNECTOR_TYPES
 from app.modules.workspace.service import get_project
-
-
-def _validate_connection_config(connector_type: str, connection_config: dict | None) -> None:
-    if connector_type != "sqlite":
-        return
-    if not connection_config or not connection_config.get("db_path"):
-        raise ValidationFailedError("sqlite sources require connection_config.db_path")
-    if not connection_config.get("query") and not connection_config.get("table"):
-        raise ValidationFailedError("sqlite sources require connection_config.query or .table")
+from app.secrets import encrypt_credentials
 
 
 def create_source(
@@ -25,13 +18,14 @@ def create_source(
     connector_type: str,
     ingestion_mode: str,
     connection_config: dict | None = None,
+    credentials: dict | None = None,
 ) -> Source:
     get_project(db, project_id)  # 404s if missing
     if connector_type not in SUPPORTED_CONNECTOR_TYPES:
         raise ValidationFailedError(
             f"connector_type '{connector_type}' not supported; choose from {SUPPORTED_CONNECTOR_TYPES}"
         )
-    _validate_connection_config(connector_type, connection_config)
+    validate_connector_config(connector_type, connection_config, credentials)
 
     source = Source(
         project_id=project_id,
@@ -39,6 +33,7 @@ def create_source(
         connector_type=connector_type,
         ingestion_mode=ingestion_mode,
         connection_config=connection_config,
+        encrypted_credentials=encrypt_credentials(credentials) if credentials else None,
         owner_id=owner_id,
     )
     db.add(source)

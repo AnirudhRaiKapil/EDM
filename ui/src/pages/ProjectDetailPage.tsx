@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import * as api from "../api/endpoints";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { StatusBadge } from "../components/StatusBadge";
-import type { ConnectorType, TransformationType } from "../api/types";
+import { FILE_BASED_CONNECTOR_TYPES, type ConnectorType, type TransformationType } from "../api/types";
 
 const TRANSFORMATION_TYPES: TransformationType[] = [
   "standardize",
@@ -15,6 +15,37 @@ const TRANSFORMATION_TYPES: TransformationType[] = [
   "filter_rows",
 ];
 
+const CONNECTOR_TYPES: ConnectorType[] = [
+  "csv",
+  "json",
+  "sqlite",
+  "oracle",
+  "s3",
+  "rest_api",
+  "servicenow",
+  "jira",
+  "confluence",
+];
+
+const CONFIG_PLACEHOLDER: Record<string, string> = {
+  sqlite: '{"db_path": "C:/data/app.db", "table": "customers"}',
+  oracle: '{"host": "db.internal", "port": 1521, "service_name": "ORCL", "table": "customers"}',
+  s3: '{"bucket": "my-bucket", "key": "data/file.csv", "region": "us-east-1"}',
+  rest_api: '{"base_url": "https://api.example.com", "path": "v1/things", "auth_type": "bearer"}',
+  servicenow: '{"instance_url": "https://x.service-now.com", "table": "incident"}',
+  jira: '{"base_url": "https://x.atlassian.net", "jql": "project = OPS"}',
+  confluence: '{"base_url": "https://x.atlassian.net", "space_key": "ENG"}',
+};
+
+const CREDENTIALS_PLACEHOLDER: Record<string, string> = {
+  oracle: '{"username": "...", "password": "..."}',
+  s3: '{"access_key_id": "...", "secret_access_key": "..."} (optional -- omit to use the default AWS credential chain)',
+  rest_api: '{"token": "..."} or {"username": "...", "password": "..."} or {"api_key": "..."}, matching auth_type',
+  servicenow: '{"username": "...", "password": "..."}',
+  jira: '{"email": "...", "api_token": "..."}',
+  confluence: '{"email": "...", "api_token": "..."}',
+};
+
 function SourcesTab({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const { data: sources } = useQuery({
@@ -24,18 +55,23 @@ function SourcesTab({ projectId }: { projectId: string }) {
 
   const [name, setName] = useState("");
   const [connectorType, setConnectorType] = useState<ConnectorType>("csv");
-  const [dbPath, setDbPath] = useState("");
-  const [table, setTable] = useState("");
+  const [connectionConfigText, setConnectionConfigText] = useState("");
+  const [credentialsText, setCredentialsText] = useState("");
+  const isFileBased = FILE_BASED_CONNECTOR_TYPES.includes(connectorType);
+
   const createSource = useMutation({
     mutationFn: () =>
       api.createSource(
         projectId,
         name,
         connectorType,
-        connectorType === "sqlite" ? { db_path: dbPath, table } : undefined,
+        connectionConfigText ? JSON.parse(connectionConfigText) : undefined,
+        credentialsText ? JSON.parse(credentialsText) : undefined,
       ),
     onSuccess: () => {
       setName("");
+      setConnectionConfigText("");
+      setCredentialsText("");
       queryClient.invalidateQueries({ queryKey: ["sources", projectId] });
     },
   });
@@ -51,31 +87,40 @@ function SourcesTab({ projectId }: { projectId: string }) {
   return (
     <div>
       <form
-        className="inline-form"
+        className="pipeline-form"
         onSubmit={(e: FormEvent) => {
           e.preventDefault();
           createSource.mutate();
         }}
       >
-        <input placeholder="Source name" value={name} onChange={(e) => setName(e.target.value)} required />
-        <select value={connectorType} onChange={(e) => setConnectorType(e.target.value as ConnectorType)}>
-          <option value="csv">csv</option>
-          <option value="json">json</option>
-          <option value="sqlite">sqlite</option>
-        </select>
-        {connectorType === "sqlite" && (
+        <div className="inline-form">
+          <input
+            placeholder="Source name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+          <select value={connectorType} onChange={(e) => setConnectorType(e.target.value as ConnectorType)}>
+            {CONNECTOR_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+        {!isFileBased && (
           <>
-            <input
-              placeholder="db_path (e.g. C:/data/app.db)"
-              value={dbPath}
-              onChange={(e) => setDbPath(e.target.value)}
-              required
+            <textarea
+              rows={2}
+              placeholder={`connection_config JSON, e.g. ${CONFIG_PLACEHOLDER[connectorType] ?? "{}"}`}
+              value={connectionConfigText}
+              onChange={(e) => setConnectionConfigText(e.target.value)}
             />
-            <input
-              placeholder="table name"
-              value={table}
-              onChange={(e) => setTable(e.target.value)}
-              required
+            <textarea
+              rows={2}
+              placeholder={`credentials JSON (encrypted at rest), e.g. ${CREDENTIALS_PLACEHOLDER[connectorType] ?? "{}"}`}
+              value={credentialsText}
+              onChange={(e) => setCredentialsText(e.target.value)}
             />
           </>
         )}
@@ -91,6 +136,7 @@ function SourcesTab({ projectId }: { projectId: string }) {
             <th>Name</th>
             <th>Type</th>
             <th>File / Config</th>
+            <th>Credentials</th>
             <th></th>
           </tr>
         </thead>
@@ -103,8 +149,9 @@ function SourcesTab({ projectId }: { projectId: string }) {
                 {source.raw_file_path ??
                   (source.connection_config ? JSON.stringify(source.connection_config) : "—")}
               </td>
+              <td>{source.has_credentials ? "stored (encrypted)" : "—"}</td>
               <td>
-                {source.connector_type !== "sqlite" && (
+                {FILE_BASED_CONNECTOR_TYPES.includes(source.connector_type) && (
                   <>
                     <input
                       type="file"

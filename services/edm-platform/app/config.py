@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     event_bus: str = "inprocess"
     kafka_bootstrap_servers: str = "localhost:9092"
     cors_origins: str = "http://localhost:5173"
+    secret_encryption_key: str = "change-me-dev-only-32-bytes-min!!"
 
     @property
     def data_path(self) -> Path:

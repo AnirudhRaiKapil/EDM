@@ -33,6 +33,11 @@ edm project create --workspace-id <id> --name sales --environment dev
 edm source create --project-id <id> --name customers-csv --connector-type csv
 edm source upload --source-id <id> --file ./customers.csv
 
+# any of oracle/s3/rest_api/servicenow/jira/confluence, e.g.:
+edm source create --project-id <id> --name snow-incidents --connector-type servicenow \
+  --connection-config '{"instance_url": "https://x.service-now.com", "table": "incident"}' \
+  --credentials '{"username": "admin", "password": "..."}'
+
 edm pipeline create --project-id <id> --name standardize-customers --source-id <id> \
   --output-dataset-name customers --output-layer silver \
   --transformations '[{"type": "standardize"}, {"type": "dedupe"}]'

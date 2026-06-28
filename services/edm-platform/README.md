@@ -25,9 +25,10 @@ API docs: http://localhost:8000/docs · Health check: http://localhost:8000/heal
 
 1. `POST /api/v1/auth/register`, `POST /api/v1/auth/login` -> bearer token
 2. `POST /api/v1/workspaces` (creator is auto-assigned the `owner` role) -> `POST /api/v1/workspaces/{id}/projects`
-3. `POST /api/v1/projects/{id}/sources` (`connector_type: csv`, `json`, or `sqlite`)
-4. `POST /api/v1/sources/{id}/upload` (multipart file upload — `csv`/`json` only; `sqlite`
-   sources read directly from `connection_config.db_path` on each job run, no upload needed)
+3. `POST /api/v1/projects/{id}/sources` (`connector_type`: see below; pass `credentials` for
+   anything that needs them — encrypted at rest, never returned by the API)
+4. `POST /api/v1/sources/{id}/upload` (multipart file upload — `csv`/`json` only; every other
+   connector type reads directly from its `connection_config` on each job run, no upload needed)
 5. `POST /api/v1/projects/{id}/pipelines` with a `transformations` list (see Transformation types below)
 6. `POST /api/v1/pipelines/{id}/jobs` -> triggers execution, returns a `Job` with `status`
 7. `GET /api/v1/catalog/datasets` / `GET /api/v1/catalog/datasets/{id}` -> the resulting Dataset + Schema
@@ -38,13 +39,21 @@ workspace (`owner` or `member`) — see `app/permissions.py`. Owners can manage 
 `POST /api/v1/workspaces/{id}/members` (`{"email": "...", "role": "owner"|"member"}`) and
 `GET /api/v1/workspaces/{id}/members`.
 
-### Connector types (`app/modules/ingestion/connectors.py`)
-`csv`, `json` (file upload), `sqlite` (`connection_config: {"db_path": "...", "table": "..."}`
-or `{"db_path": "...", "query": "SELECT ..."}` — SELECT-only, table names validated against an
-identifier pattern). Network databases (Postgres/MySQL/etc.) are intentionally not yet supported:
-they need per-source credential storage, which is out of scope until Vault lands (ADR-0003)  —
-stuffing a plaintext password into `connection_config` would contradict the platform's own
-security principles, so SQLite (no credentials needed) is the connector for now.
+### Connector types (`app/modules/ingestion/connectors.py`, `app/modules/ingestion/specs.py`)
+- `csv`, `json` — file upload.
+- `sqlite` — `connection_config: {"db_path": "...", "table": "..."}` or `{..., "query": "SELECT ..."}` (SELECT-only, table names validated against an identifier pattern). No credentials needed.
+- `oracle` — `connection_config: {"host", "port", "service_name", "table"|"query"}`, `credentials: {"username", "password"}`. Uses `python-oracledb` thin mode (no Oracle Client install).
+- `s3` — `connection_config: {"bucket", "key", "region"?, "file_format"?}`, `credentials` optional (falls back to boto3's default credential chain).
+- `rest_api` — fully generic: `connection_config: {"base_url", "path", "method"?, "auth_type": "none"|"bearer"|"basic"|"api_key_header", "records_path"?, "pagination"?}`. This is the connector for any enterprise REST API not named below.
+- `servicenow` — `connection_config: {"instance_url", "table", "query"?}`, `credentials: {"username", "password"}`. Table API, offset pagination.
+- `jira` — `connection_config: {"base_url", "jql"?}`, `credentials: {"email", "api_token"}`.
+- `confluence` — `connection_config: {"base_url", "cql"?|"space_key"?}`, `credentials: {"email", "api_token"}`.
+
+Credentials are encrypted at rest (`app/secrets.py`, Fernet) since real Vault remains out of
+reach (ADR-0003/0004) — see [ADR-0009](../../docs/adr/0009-encrypted-secrets-and-enterprise-connectors.md)
+for the full reasoning and which connectors are field-verified vs. logic-verified-only (no real
+ServiceNow/Jira/Confluence/Oracle account or Docker-based emulator available in this environment
+— only S3, via `moto`, gets genuine API-level verification).
 
 ### Transformation types (`app/modules/pipeline/transformations.py`)
 `standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`
@@ -89,7 +98,11 @@ SQLite connector, including rejecting non-`SELECT` queries; `test_quality.py` co
 vs. warning severity, including that a blocking failure leaves prior published data intact;
 `test_lineage.py` covers tracing a dataset back to its source/pipeline and that reruns append
 rather than replace edges; `test_alerting.py` covers critical alerts on failure, warning alerts
-on quality warnings, the acknowledge/resolve lifecycle, and that non-members can't see them.
+on quality warnings, the acknowledge/resolve lifecycle, and that non-members can't see them;
+`test_secrets.py` covers the encryption round-trip and that credentials never leak via the API;
+`test_rest_client.py` covers the generic REST pagination/auth engine; `test_enterprise_connectors.py`,
+`test_oracle_connector.py`, and `test_s3_connector.py` cover the new connectors (S3 against a
+real in-memory `moto` S3 emulation; the rest against a mocked transport/connection only).
 
 ## Swapping in real infrastructure later
 

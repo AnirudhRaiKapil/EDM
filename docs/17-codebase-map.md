@@ -44,6 +44,7 @@ Status legend: **Built** (has working code + tests) · **Placeholder** (director
 | `adr/0006-lineage-pulled-into-mvp.md` | Why `edm-lineage` was pulled forward from the V2 module list into the MVP. |
 | `adr/0007-react-ui-and-cors-fix.md` | UI tech stack choices, and why `CORSMiddleware` had to be added to the backend (the UI was the first cross-origin browser client). |
 | `adr/0008-alerting-pulled-into-mvp.md` | Why `edm-alerting` was pulled forward from the V2 module list into the MVP, and why alerts are created by direct call from `edm-job` rather than via the event bus. |
+| `adr/0009-encrypted-secrets-and-enterprise-connectors.md` | Why credentials are now encrypted-at-rest (Fernet) instead of deferred entirely, and the Oracle/S3/REST-API/ServiceNow/Jira/Confluence connectors this unblocked. |
 | `diagrams/` | Empty — reserved for diagram source files (excalidraw/mermaid/drawio) if/when needed. |
 
 ## `services/edm-platform/` — the application
@@ -63,6 +64,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `events.py` | The in-process event bus (`publish`/`subscribe`) — logs every event and is the swap point for a real Kafka producer later (ADR-0003). Topic names match `02-domain-model.md` Section 5. |
 | `deps.py` | `get_current_user` — decodes the bearer token and loads the `User`, used by every authenticated route. |
 | `permissions.py` | Cross-module authorization helpers (`require_project_access`, `require_source_access`, `require_pipeline_access`, `require_job_access`) that resolve a resource back to its owning Workspace and check the caller's `RoleAssignment`. This is the one file allowed to import service functions from multiple modules, because enforcing access control is inherently cross-cutting. |
+| `secrets.py` | `encrypt_credentials`/`decrypt_credentials` — Fernet symmetric encryption keyed from `SECRET_ENCRYPTION_KEY`, used by `edm-source` to store real credentials (Oracle/S3/ServiceNow/Jira/Confluence) without Vault. See [ADR-0009](adr/0009-encrypted-secrets-and-enterprise-connectors.md). |
 
 ### `app/modules/core/` — shared kernel, no HTTP surface
 
@@ -94,16 +96,18 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 
 | File | What it does |
 |---|---|
-| `models.py` | `Source` — `connector_type`, `connection_config` (JSON, non-secret only per the domain model's `Source.connectionConfig`/`secretRef` split), `raw_file_path` for file-based connectors. |
-| `schemas.py` | `SUPPORTED_CONNECTOR_TYPES = ["csv", "json", "sqlite"]`; `SourceCreate/Read`. |
-| `service.py` | Create/list/get a Source; validates `connection_config` shape per connector type (e.g. `sqlite` needs `db_path` + `table`/`query`); `attach_raw_file` after an upload. |
+| `models.py` | `Source` — `connector_type`, `connection_config` (JSON, non-secret only per the domain model's `Source.connectionConfig`/`secretRef` split), `encrypted_credentials` (Fernet ciphertext, ADR-0009), `raw_file_path` for file-based connectors. `has_credentials` is a Python `@property` (`encrypted_credentials is not None`), not a column — lets `SourceRead`'s `from_attributes` pick it up with no extra plumbing while never exposing the ciphertext itself. |
+| `schemas.py` | `SUPPORTED_CONNECTOR_TYPES` (9 types — file-based csv/json, plus sqlite/oracle/s3/rest_api/servicenow/jira/confluence); `SourceCreate` (accepts an optional `credentials` dict, write-only); `SourceRead` (exposes `has_credentials: bool`, never the credentials themselves). |
+| `service.py` | Create/list/get a Source; delegates connection_config/credential shape validation to `app.modules.ingestion.specs.validate_connector_config` (shared with the ingestion module so the two can't drift apart); encrypts `credentials` via `app.secrets.encrypt_credentials` before storing. `attach_raw_file` after an upload. |
 | `router.py` | `POST/GET /projects/{id}/sources`, `GET /sources/{id}` — all permission-checked via `app/permissions.py`. |
 
 ### `app/modules/ingestion/` — turning a Source into a DataFrame
 
 | File | What it does |
 |---|---|
-| `connectors.py` | `load_source_dataframe(source)` — dispatches to `pd.read_csv`/`pd.read_json` for file sources, or `_load_sqlite` for `connector_type="sqlite"` (validates the query is `SELECT`-only, validates table names against an identifier pattern, reads via stdlib `sqlite3` + `pd.read_sql_query`). Network databases (Postgres/MySQL/etc.) are intentionally not supported yet — they'd need per-source credential storage that doesn't exist until Vault lands (ADR-0003); see the README note in `services/edm-platform/README.md`. |
+| `specs.py` | Per-connector-type validation (`validate_connector_config`) — what `connection_config`/`credentials` keys each of sqlite/oracle/s3/rest_api/servicenow/jira/confluence requires. Shared by `edm-source` (create-time validation) and read implicitly by `connectors.py` (run-time field access), so the two can't define a field's requirements differently. |
+| `rest_client.py` | `fetch_paginated_records` — the generic engine behind `rest_api`/`servicenow`/`jira`/`confluence`: builds auth (bearer/basic/api_key_header), loops page-number or offset/limit pagination until a short page, extracts the records array via a dotted `records_path` into an arbitrary JSON response shape. Takes an injectable `client` param so tests can supply `httpx.MockTransport` instead of making real network calls. |
+| `connectors.py` | `load_source_dataframe(source)` dispatches by `connector_type`: `csv`/`json` read a previously-uploaded file; `sqlite`/`oracle` validate the query is `SELECT`-only and run it (oracle via `python-oracledb` thin mode — no Oracle Client install needed); `s3` reads an object via `boto3` (credentials optional — falls back to boto3's default chain); `rest_api`/`servicenow`/`jira`/`confluence` call `rest_client.fetch_paginated_records` with system-specific defaults (e.g. ServiceNow's `api/now/table/{table}` + `sysparm_offset`, Jira's `rest/api/3/search` + JQL, mapping Atlassian's `email`/`api_token` onto basic auth). See ADR-0009 for which of these are verified against a real system (only S3, via `moto`) vs. request-building logic only (the rest — no real account or Docker-based emulator available here). |
 | `router.py` | `POST /sources/{id}/upload` (multipart) — saves the file via the storage adapter and calls `attach_raw_file`. |
 
 ### `app/modules/pipeline/` — declarative transform definitions
@@ -198,12 +202,17 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `test_lineage.py` | A dataset's lineage correctly names its source and pipeline as upstream (and vice versa downstream); reruns append a new edge per job rather than replacing the old one. |
 | `test_cors.py` | The configured UI origin gets `Access-Control-Allow-Origin` on preflight; an arbitrary origin doesn't. Regression test for the bug `edm-ui`'s first real run caught. |
 | `test_alerting.py` | A failing job raises a `critical` alert; a quality-warning job still succeeds but raises a `warning` alert; acknowledge/resolve transitions; non-members get 404 on a project's alerts. |
+| `test_secrets.py` | Encrypt/decrypt round-trip; tampered ciphertext is rejected; a source's credentials never appear in any API response body, only `has_credentials`. |
+| `test_rest_client.py` | The generic REST engine: bare-list and dotted-`records_path` extraction, page and offset pagination (including the short-page stop condition), all three auth modes, HTTP-error propagation — all via `httpx.MockTransport`, no real network calls. |
+| `test_enterprise_connectors.py` | ServiceNow/Jira/Confluence/generic-REST connectors build the right URL, query params, and auth for their system, by patching `rest_client.httpx.Client` to a mock transport and asserting on the requests it actually received. |
+| `test_oracle_connector.py` | DSN/query construction and result-to-DataFrame mapping against a fake `oracledb.connect`; rejects non-`SELECT` queries and invalid table names. No real Oracle instance is available to test against (ADR-0009). |
+| `test_s3_connector.py` | Reads CSV/JSON from a `moto`-mocked S3 bucket (real S3 API emulation, not a hand-rolled mock); falls back to the default AWS credential chain when no explicit credentials are given. |
 
 ### Other files in `services/edm-platform/`
 
 | File | What it does |
 |---|---|
-| `requirements.txt` | Pinned dependencies — all chosen to have prebuilt Windows wheels (no compiler needed): fastapi, uvicorn, sqlalchemy, pydantic-settings, email-validator, pyjwt, pandas, duckdb, pyarrow, python-multipart, httpx, pytest. |
+| `requirements.txt` | Pinned dependencies — all chosen to have prebuilt Windows wheels (no compiler needed): fastapi, uvicorn, sqlalchemy, pydantic-settings, email-validator, pyjwt, pandas, duckdb, pyarrow, python-multipart, httpx, cryptography, oracledb, boto3, apscheduler, pytest, moto. |
 | `.env.example` | Every setting `config.py` reads, with inline comments on what to change to swap in real Postgres/MinIO/Kafka later. `.env` itself is gitignored. |
 | `README.md` | How to run locally, the golden path as literal `curl`-able steps, connector/transformation/quality-rule reference, test notes. |
 
@@ -213,7 +222,7 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `edm_cli/config.py` | Where credentials persist (`~/.edm/credentials.json`) and where the API base URL comes from (`EDM_API_URL` env var, default `localhost:8000`). |
 | `edm_cli/client.py` | `ApiClient` — injects the bearer token, raises `ApiError` with the server's `detail` message on any 4xx/5xx so the CLI can print something readable instead of a stack trace. |
-| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. |
+| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. `source create --connector-type` covers all 9 types; `--connection-config`/`--credentials` take raw JSON strings (credentials encrypted server-side, never echoed back). |
 | `pyproject.toml` | Packages `edm_cli` and registers the `edm` console-script entry point. |
 | `README.md` | Install steps, the golden path as CLI commands, and why this exists (it's what caught the path-handling bug in `app/modules/storage/adapter.py` — see `docs/16-build-roadmap.md`). |
 
@@ -225,7 +234,7 @@ no UI component library (plain CSS in `src/index.css`).
 | File | What it does |
 |---|---|
 | `src/api/client.ts` | The axios instance every API call goes through — a request interceptor injects the bearer token from `localStorage`, a response interceptor turns any error into `ApiError` with the server's `detail` message. |
-| `src/api/types.ts` | TypeScript interfaces mirroring every backend Pydantic schema (`Workspace`, `Source`, `Pipeline`, `Job`, `Dataset`, `QualityRule`, `LineageGraph`, etc.). |
+| `src/api/types.ts` | TypeScript interfaces mirroring every backend Pydantic schema (`Workspace`, `Source`, `Pipeline`, `Job`, `Dataset`, `QualityRule`, `LineageGraph`, `Alert`, etc.). `ConnectorType` lists all 9 connector types; `FILE_BASED_CONNECTOR_TYPES` (csv/json) is what the UI checks to decide upload-button vs. config-textarea. |
 | `src/api/endpoints.ts` | One typed async function per backend endpoint, grouped by resource in a single file (kept as one file deliberately — splitting into ten near-empty files wasn't worth the navigation overhead at this size). |
 | `src/context/AuthContext.tsx` | `login`/`register`/`logout` + the current `User`; token persisted to `localStorage`, rehydrated via `whoami()` on load. |
 | `src/components/ProtectedRoute.tsx` | Redirects to `/login` when there's no authenticated user; everything under it assumes `useAuth()` returns a real user. |
@@ -235,11 +244,11 @@ no UI component library (plain CSS in `src/index.css`).
 | `src/pages/LoginPage.tsx`, `RegisterPage.tsx` | Auth forms; redirect to `/workspaces` on success. |
 | `src/pages/WorkspacesPage.tsx` | List the caller's workspaces (membership-filtered by the backend, not the UI), create a new one. |
 | `src/pages/WorkspaceDetailPage.tsx` | Projects (list + create) and members (list + add, owner-only enforced server-side) for one workspace. |
-| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for file connectors, inline `connection_config` fields for `sqlite`), a Pipelines tab (create, with an inline repeatable transformation-step builder — type dropdown + a raw JSON `parameters` field per step), and an Alerts tab (status-filterable list, acknowledge/resolve). |
+| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for the 2 file-based connector types, generic `connection_config`/`credentials` JSON textareas with per-type placeholder hints for the other 7 — deliberately generic rather than bespoke fields per type, since that doesn't scale past a couple of connector types), a Pipelines tab (create, with an inline repeatable transformation-step builder), and an Alerts tab (status-filterable list, acknowledge/resolve). |
 | `src/pages/PipelineDetailPage.tsx` | Transformation list, a "Run pipeline" button, and job history (status, rows in/out, quality outcome, link to the produced dataset) — polls while a job is `running`/`queued`. |
 | `src/pages/CatalogPage.tsx` | Dataset search (by name substring, optionally scoped to a project via `?project_id=`). |
 | `src/pages/DatasetDetailPage.tsx` | Everything about one dataset in one place: schema, tags + classification (editable), data quality (add/remove rules, run history), lineage (upstream/downstream), and a SQL query runner against it — one component per concern (`SchemaSection`, `TagsAndClassificationSection`, `QualitySection`, `LineageSection`, `QuerySection`). |
-| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, pipeline (with transformations), run, view dataset, tag, classify, add a quality rule, check lineage, run a query, then deliberately trigger a failing pipeline and walk its alert through acknowledge -> resolve — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
+| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, **a second source via the generic connection_config/credentials fields (oracle) with an explicit assertion that the credential string never appears in the page**, pipeline (with transformations), run, view dataset, tag, classify, add a quality rule, check lineage, run a query, then deliberately trigger a failing pipeline and walk its alert through acknowledge -> resolve — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
 | `package.json` | `npm run dev`/`build`/`e2e`/`e2e:install`. Dependencies: `react-router-dom` (routing), `@tanstack/react-query` (server-state caching/mutations), `axios` (HTTP). Dev-only: `playwright` (e2e), `vite`, `typescript`. |
 | `.env.example` | `VITE_API_URL`, defaulting to `http://localhost:8000/api/v1`. |
 | `README.md` | Run instructions, route map, e2e instructions, and the CORS bug story. |

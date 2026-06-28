@@ -83,7 +83,7 @@ A configured instance of a Connector — "the Postgres database for the Orders s
 | connectorType | string | e.g. `postgres`, `kafka`, `rest-api`, `s3` |
 | name | string | |
 | connectionConfig | JSON | non-secret config only |
-| secretRef | string | pointer into Vault, never the secret itself |
+| secretRef | string | pointer into Vault, never the secret itself — implemented today as `Source.encrypted_credentials` (Fernet-encrypted column) rather than a real Vault pointer; see [ADR-0009](adr/0009-encrypted-secrets-and-enterprise-connectors.md) |
 | ingestionMode | enum | `batch`, `streaming`, `cdc` |
 | status | enum | `draft`, `active`, `disabled`, `archived` |
 | owner | User ref | |

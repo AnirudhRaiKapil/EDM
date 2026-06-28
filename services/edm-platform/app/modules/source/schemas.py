@@ -2,8 +2,19 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-SUPPORTED_CONNECTOR_TYPES = ["csv", "json", "sqlite"]
+SUPPORTED_CONNECTOR_TYPES = [
+    "csv",
+    "json",
+    "sqlite",
+    "oracle",
+    "s3",
+    "rest_api",
+    "servicenow",
+    "jira",
+    "confluence",
+]
 FILE_BASED_CONNECTOR_TYPES = ["csv", "json"]
+CREDENTIALED_CONNECTOR_TYPES = ["oracle", "s3", "rest_api", "servicenow", "jira", "confluence"]
 
 
 class SourceCreate(BaseModel):
@@ -11,6 +22,7 @@ class SourceCreate(BaseModel):
     connector_type: str = "csv"
     ingestion_mode: str = "batch"
     connection_config: dict | None = None
+    credentials: dict | None = None
 
 
 class SourceRead(BaseModel):
@@ -22,6 +34,7 @@ class SourceRead(BaseModel):
     status: str
     raw_file_path: str | None
     connection_config: dict | None
+    has_credentials: bool
     owner_id: str
     created_at: datetime
 

@@ -17,3 +17,8 @@ class Source(Base, UUIDPrimaryKeyMixin, TimestampMixin, OwnedMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     raw_file_path: Mapped[str] = mapped_column(String(1000), nullable=True)
     connection_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    encrypted_credentials: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+
+    @property
+    def has_credentials(self) -> bool:
+        return self.encrypted_credentials is not None

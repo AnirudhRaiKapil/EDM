@@ -74,8 +74,15 @@ caught. `edm-alerting` (also pulled forward from V2 — [ADR-0008](adr/0008-aler
 is built: `edm-job` raises an `Alert` directly on any failure or quality warning, with an
 open/acknowledged/resolved lifecycle exposed through the API, CLI (`edm alert
 list/acknowledge/resolve`), and a UI tab — covered by both backend tests and an extended
-`ui/e2e/smoke.mjs` run that drives a real failure through to resolution. `edm-governance`
-(beyond RBAC), `edm-notification`, `edm-monitoring`, `edm-ai`, and the SDK remain unbuilt. See
+`ui/e2e/smoke.mjs` run that drives a real failure through to resolution. Ingestion now reaches
+real enterprise systems, not just files/SQLite: Oracle, AWS S3, a generic REST API connector,
+and ServiceNow/Jira/Confluence presets built on it ([ADR-0009](adr/0009-encrypted-secrets-and-enterprise-connectors.md)),
+backed by encrypted-at-rest credential storage (`Source.encrypted_credentials`, Fernet) since
+Vault remains out of reach (ADR-0003/0004). S3 is verified against a real in-memory S3 emulation
+(`moto`); Oracle/ServiceNow/Jira/Confluence/generic-REST are verified at the request-building
+level only (mocked transport/connection) — there's no real account or Docker-based emulator
+available in this environment to integration-test the others against. `edm-governance` (beyond
+RBAC), `edm-notification`, `edm-monitoring`, `edm-ai`, and the SDK remain unbuilt. See
 [17-codebase-map.md](17-codebase-map.md) for the
 file-level picture, kept current
 per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).

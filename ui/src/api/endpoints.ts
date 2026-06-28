@@ -81,11 +81,13 @@ export async function createSource(
   name: string,
   connector_type: string,
   connection_config?: Record<string, unknown>,
+  credentials?: Record<string, unknown>,
 ) {
   const { data } = await apiClient.post<Source>(`/projects/${projectId}/sources`, {
     name,
     connector_type,
     connection_config,
+    credentials,
   });
   return data;
 }

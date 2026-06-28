@@ -146,14 +146,35 @@ def source():
 @source.command("create")
 @click.option("--project-id", required=True)
 @click.option("--name", required=True)
-@click.option("--connector-type", default="csv", type=click.Choice(["csv", "json", "sqlite"]))
-@click.option("--connection-config", default=None, help="JSON string, e.g. for sqlite: "
-              '\'{"db_path": "C:/data/app.db", "table": "customers"}\'')
+@click.option(
+    "--connector-type",
+    default="csv",
+    type=click.Choice(
+        ["csv", "json", "sqlite", "oracle", "s3", "rest_api", "servicenow", "jira", "confluence"]
+    ),
+)
+@click.option(
+    "--connection-config",
+    default=None,
+    help='JSON string, e.g. for sqlite: \'{"db_path": "C:/data/app.db", "table": "customers"}\'; '
+    'for oracle: \'{"host": "...", "port": 1521, "service_name": "...", "table": "..."}\'; '
+    'for s3: \'{"bucket": "...", "key": "data/file.csv"}\'; '
+    'for servicenow: \'{"instance_url": "https://x.service-now.com", "table": "incident"}\'; '
+    'for jira/confluence: \'{"base_url": "https://x.atlassian.net", "jql": "..."}\'',
+)
+@click.option(
+    "--credentials",
+    default=None,
+    help='JSON string, e.g. \'{"username": "...", "password": "..."}\' or '
+    '\'{"email": "...", "api_token": "..."}\' -- encrypted at rest, never returned by the API.',
+)
 @handle_errors
-def source_create(project_id, name, connector_type, connection_config):
+def source_create(project_id, name, connector_type, connection_config, credentials):
     payload = {"name": name, "connector_type": connector_type}
     if connection_config:
         payload["connection_config"] = json_lib.loads(connection_config)
+    if credentials:
+        payload["credentials"] = json_lib.loads(credentials)
     echo_json(ApiClient().post(f"/projects/{project_id}/sources", json=payload))
 
 

@@ -26,11 +26,13 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 - `src/api/types.ts` — TypeScript interfaces mirroring every backend Pydantic schema.
 - `src/api/endpoints.ts` — one typed function per API call, grouped by resource.
 - `src/context/AuthContext.tsx` — login/register/logout, token persisted to `localStorage`.
-- `src/pages/` — one file per route. `ProjectDetailPage.tsx` holds a Sources tab, a Pipelines tab
-  (with an inline transformation-step builder), and an Alerts tab (status-filterable,
-  acknowledge/resolve); `DatasetDetailPage.tsx` holds schema, tags, classification, data quality
-  (rules + run history), lineage, and a SQL query runner — every backend capability has a
-  corresponding place to use it from here.
+- `src/pages/` — one file per route. `ProjectDetailPage.tsx` holds a Sources tab (generic
+  `connection_config`/`credentials` JSON fields cover all 7 non-file connector types — not
+  bespoke fields per type, since that stopped scaling once Oracle/S3/REST/ServiceNow/Jira/
+  Confluence joined sqlite), a Pipelines tab (with an inline transformation-step builder), and an
+  Alerts tab (status-filterable, acknowledge/resolve); `DatasetDetailPage.tsx` holds schema,
+  tags, classification, data quality (rules + run history), lineage, and a SQL query runner —
+  every backend capability has a corresponding place to use it from here.
 
 ## Routes
 
