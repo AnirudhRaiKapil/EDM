@@ -13,6 +13,11 @@ const TONE: Record<string, string> = {
   open: "status-warning",
   acknowledged: "status-pending",
   resolved: "status-good",
+  draft: "status-pending",
+  promoted: "status-good",
+  ok: "status-good",
+  error: "status-bad",
+  skipped: "status-warning",
 };
 
 export function StatusBadge({ value }: { value: string | null | undefined }) {

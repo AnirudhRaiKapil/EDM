@@ -40,3 +40,24 @@ def test_filter_rows_not_null():
     df = pd.DataFrame({"x": [1, None, 3]})
     result = apply_transformation(df, "filter_rows", {"column": "x", "operator": "not_null"})
     assert result["x"].tolist() == [1, 3]
+
+
+def test_python_code_runs_sandboxed():
+    df = pd.DataFrame({"amount": [10, 20, 30]})
+    result = apply_transformation(df, "python_code", {"code": "df['amount'] = df['amount'] * 2"})
+    assert result["amount"].tolist() == [20, 40, 60]
+
+
+def test_python_code_does_not_truncate_rows_past_preview_limit():
+    # Regression test: app/sandbox.py's "preview" is capped at 50 rows for UI display.
+    # The python_code transformation must use the FULL result, not the preview, or a
+    # real pipeline run over >50 rows would silently lose data past row 50.
+    df = pd.DataFrame({"id": range(200)})
+    result = apply_transformation(df, "python_code", {"code": "pass"})
+    assert len(result) == 200
+
+
+def test_python_code_raises_on_sandboxed_error():
+    df = pd.DataFrame({"x": [1]})
+    with pytest.raises(ValidationFailedError):
+        apply_transformation(df, "python_code", {"code": "import os"})

@@ -167,7 +167,8 @@ MVP.
 | `edm-workspace` | Organizations, projects, environments |
 | `edm-source` | Register and manage data sources |
 | `edm-ingestion` | Connector framework, batch/stream/CDC ingestion |
-| `edm-pipeline` | Pipeline definitions and orchestration triggers |
+| `edm-pipeline` | Pipeline definitions and orchestration triggers, including cron scheduling via APScheduler — see [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md) |
+| `edm-notebook` | Interactive, code-first ETL development: write and run code in cells against a sample of a Source, then promote it into a real `edm-pipeline` Pipeline. Not in the original V1/V2 module map at all — added in direct response to an explicit user request, not "pulled forward" from a pre-planned V2 entry. See [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md) |
 | `edm-job` | Job execution and monitoring |
 | `edm-storage` | Lakehouse storage abstraction (Bronze/Silver/Gold) |
 | `edm-catalog` | Search and discovery over registered datasets |
@@ -218,6 +219,7 @@ Pipeline Service -> Kafka -> Job Service -> Metadata Service -> Notification Ser
 /api/v1/sources
 /api/v1/connectors
 /api/v1/pipelines
+/api/v1/notebooks
 /api/v1/jobs
 
 /api/v1/catalog

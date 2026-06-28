@@ -16,8 +16,10 @@
 | Policy | `edm-governance` | A governance rule (access, masking, retention, classification) attached to a scope |
 | Source | `edm-source` | A registered external system instance data is read from |
 | Connector | `edm-ingestion` | The technical plugin/driver that knows how to talk to a class of Source |
-| Pipeline | `edm-pipeline` | A versioned definition of how data moves and transforms from Source(s) to Dataset(s) |
+| Pipeline | `edm-pipeline` | A versioned definition of how data moves and transforms from Source(s) to Dataset(s); optionally runs unattended on a cron schedule |
 | Transformation | `edm-pipeline` | A single reusable step within a Pipeline's DAG |
+| Notebook | `edm-notebook` | An interactive, code-first scratchpad for developing a Pipeline's logic against a sample of a Source's data before promoting it (not in the original model — added per [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md)) |
+| Notebook Cell | `edm-notebook` | A single ordered block of user-authored Python within a Notebook (ADR-0010) |
 | Job | `edm-job` | One execution instance of a Pipeline at a point in time |
 | Cluster | `edm-job` | The compute resource (Spark/Flink execution environment) a Job runs on |
 | Dataset | `edm-catalog` / `edm-storage` | A discoverable, logical data asset backed by physical storage |
@@ -115,7 +117,7 @@ outputs, schedule/trigger. **Metadata-driven, not code** (Rule 4 in
 | sourceIds | FK[] -> Source | inputs |
 | outputDatasetIds | FK[] -> Dataset | outputs |
 | transformations | Transformation[] | ordered/DAG steps |
-| trigger | enum/JSON | `schedule(cron)`, `event(topic)`, `manual` |
+| trigger | enum/JSON | `schedule(cron)`, `event(topic)`, `manual` — implemented today as `schedule_cron: string \| null` (a 5-field cron expression, MVP-trimmed from the originally-planned generic `trigger` JSON; `event(topic)` is not implemented) plus the always-available manual `POST .../jobs` trigger. See [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md). |
 | engine | enum | `batch` (Spark), `streaming` (Flink) |
 | status | enum | `draft`, `active`, `paused`, `deprecated`, `archived` |
 | owner | User ref | |
@@ -123,15 +125,45 @@ outputs, schedule/trigger. **Metadata-driven, not code** (Rule 4 in
 ### Transformation
 A single named, parameterized step inside a Pipeline (validation, standardization, enrichment,
 lookup/join, SCD, business rule, aggregation). Stored as metadata + parameters, not bespoke code,
-so the same Transformation type can be reused across Pipelines.
+so the same Transformation type can be reused across Pipelines. One type, `python_code`, is an
+intentional escape hatch from "metadata-driven, not code" — its single `code` parameter holds
+user-authored Python, run through the restricted sandbox described in ADR-0010. It exists because
+a fixed menu of declarative transformation types can't express arbitrary logic, and is reachable
+in practice almost always via promoting an `edm-notebook` Notebook rather than being hand-authored.
 
 | Field | Type | Notes |
 |---|---|---|
 | id | UUID | |
 | pipelineId | FK -> Pipeline | |
-| type | string | e.g. `standardize`, `dedupe`, `scd2`, `business-rule`, `aggregate` |
+| type | string | e.g. `standardize`, `dedupe`, `scd2`, `business-rule`, `aggregate`, `python_code` |
 | order | int | position in the DAG |
 | parameters | JSON | type-specific config |
+
+### Notebook / Notebook Cell
+*(Not in the original model — added per [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md).)*
+An interactive scratchpad for developing a Pipeline's transformation logic: write code in ordered
+Cells, run them against a small sample of one Source's data, see each cell's result immediately,
+then promote the whole notebook into a real Pipeline once it works. Deliberately stateless across
+runs — every run re-executes every cell from scratch rather than keeping a live kernel process
+between requests (see the ADR for why).
+
+| Field | Type | Notes |
+|---|---|---|
+| id | UUID | |
+| projectId | FK -> Project | |
+| sourceId | FK -> Source | the one Source this notebook samples from |
+| name | string | |
+| sampleSize | int | rows sampled per run, default 100 |
+| status | enum | `draft`, `promoted` |
+| promotedPipelineId | FK -> Pipeline, nullable | set once `promote` has been called |
+| owner | User ref | |
+
+| Field (Notebook Cell) | Type | Notes |
+|---|---|---|
+| id | UUID | |
+| notebookId | FK -> Notebook | |
+| order | int | execution order |
+| code | string | Python source; must leave a DataFrame bound to `df` |
 
 ### Job
 One execution of a Pipeline. The Control Plane creates Jobs; the Data Plane executes them.
@@ -239,12 +271,16 @@ Workspace 1───* User            (via RoleAssignment)
 Project   1───* Source
 Project   1───* Pipeline
 Project   1───* Dataset
+Project   1───* Notebook
 
 Source    *───1 Connector       (Source is a configured instance of a Connector type)
+Source    1───* Notebook        (a Notebook samples exactly one Source)
 Pipeline  *───* Source          (inputs)
 Pipeline  1───* Transformation  (ordered DAG steps)
 Pipeline  1───* Dataset         (outputs)
 Pipeline  1───* Job             (execution history)
+Notebook  1───* NotebookCell    (ordered)
+Notebook  0..1───1 Pipeline     (promotedPipelineId, once promoted)
 
 Job       *───1 Cluster
 Job       1───* QualityRun      (quality checks tied to the data a Job produced)
@@ -266,6 +302,8 @@ Policy    *───1 (Workspace|Project|Dataset|Column)   (scope it governs)
 Source:      draft -> active -> disabled -> archived
 
 Pipeline:    draft -> active <-> paused -> deprecated -> archived
+
+Notebook:    draft -> promoted   (promotion is one-way; further edits keep status "promoted")
 
 Job:         queued -> running -> succeeded
                                 -> failed   -> (retry) -> queued

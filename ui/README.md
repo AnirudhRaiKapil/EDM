@@ -29,10 +29,14 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 - `src/pages/` — one file per route. `ProjectDetailPage.tsx` holds a Sources tab (generic
   `connection_config`/`credentials` JSON fields cover all 7 non-file connector types — not
   bespoke fields per type, since that stopped scaling once Oracle/S3/REST/ServiceNow/Jira/
-  Confluence joined sqlite), a Pipelines tab (with an inline transformation-step builder), and an
-  Alerts tab (status-filterable, acknowledge/resolve); `DatasetDetailPage.tsx` holds schema,
-  tags, classification, data quality (rules + run history), lineage, and a SQL query runner —
-  every backend capability has a corresponding place to use it from here.
+  Confluence joined sqlite), a Pipelines tab (with an inline transformation-step builder), a
+  Notebooks tab (create + list, links into `NotebookDetailPage.tsx`), and an Alerts tab
+  (status-filterable, acknowledge/resolve); `PipelineDetailPage.tsx` also holds a Schedule
+  section (set/clear a cron expression); `NotebookDetailPage.tsx` holds per-cell editors with
+  run/delete controls and inline results, a "run all" button, and a promote-to-pipeline form
+  (ADR-0010); `DatasetDetailPage.tsx` holds schema, tags, classification, data quality (rules +
+  run history), lineage, and a SQL query runner — every backend capability has a corresponding
+  place to use it from here.
 
 ## Routes
 
@@ -40,8 +44,9 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 /login, /register
 /workspaces                                          list + create
 /workspaces/:workspaceId                              projects + members
-/workspaces/:workspaceId/projects/:projectId          sources + pipelines + alerts tabs
-/pipelines/:pipelineId                                transformations, run, job history
+/workspaces/:workspaceId/projects/:projectId          sources + pipelines + notebooks + alerts tabs
+/pipelines/:pipelineId                                transformations, schedule, run, job history
+/notebooks/:notebookId                                cells (edit/run/delete), promote to pipeline
 /catalog                                              dataset search
 /datasets/:datasetId                                  schema, tags, classification, quality, lineage, query
 ```
@@ -50,9 +55,11 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 
 There's no browser available to a coding agent directly, so verifying this app means launching a
 real (headless) browser against it — see `e2e/smoke.mjs`, which drives the entire golden path
-(register → workspace → project → source → upload → pipeline → run → tag/classify → quality rule
-→ lineage → query → deliberately-failing pipeline → acknowledge/resolve the resulting alert)
-through actual clicks and form fills, then screenshots every step.
+(register → workspace → project → source → upload → pipeline → run → set/clear a cron schedule →
+tag/classify → quality rule → lineage → query → create a notebook, write and run cells that share
+state across each other, promote it to a pipeline and run that too → deliberately-failing pipeline
+→ acknowledge/resolve the resulting alert) through actual clicks and form fills, then screenshots
+every step.
 
 ```
 npm run e2e:install   # once, downloads the Chromium binary

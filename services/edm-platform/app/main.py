@@ -16,6 +16,7 @@ from app.modules.catalog import models as catalog_models  # noqa: F401
 from app.modules.job import models as job_models  # noqa: F401
 from app.modules.lineage import models as lineage_models  # noqa: F401
 from app.modules.metadata import models as metadata_models  # noqa: F401
+from app.modules.notebook import models as notebook_models  # noqa: F401
 from app.modules.pipeline import models as pipeline_models  # noqa: F401
 from app.modules.quality import models as quality_models  # noqa: F401
 from app.modules.source import models as source_models  # noqa: F401
@@ -27,6 +28,7 @@ from app.modules.catalog.router import router as catalog_router
 from app.modules.ingestion.router import router as ingestion_router
 from app.modules.job.router import router as job_router
 from app.modules.lineage.router import router as lineage_router
+from app.modules.notebook.router import router as notebook_router
 from app.modules.pipeline.router import router as pipeline_router
 from app.modules.quality.router import router as quality_router
 from app.modules.query.router import router as query_router
@@ -39,7 +41,15 @@ logging.basicConfig(level=logging.INFO)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    if settings.enable_scheduler:
+        from app import scheduler
+
+        scheduler.start()
     yield
+    if settings.enable_scheduler:
+        from app import scheduler
+
+        scheduler.shutdown()
 
 
 app = FastAPI(title="EDM Platform", version="0.1.0", lifespan=lifespan)
@@ -65,6 +75,7 @@ for router in (
     query_router,
     lineage_router,
     alerting_router,
+    notebook_router,
 ):
     app.include_router(router, prefix=API_PREFIX)
 

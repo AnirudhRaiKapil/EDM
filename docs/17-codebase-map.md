@@ -58,13 +58,15 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 
 | File | What it does |
 |---|---|
-| `main.py` | Builds the FastAPI app, imports every module's models so `Base.metadata` is complete before table creation, mounts every router under `/api/v1`, registers `CORSMiddleware` (added once `edm-ui` made the first cross-origin browser request — ADR-0007), and registers the `EdmError -> JSONResponse` exception handler. The single file that wires the whole monolith together. |
-| `config.py` | `Settings` (pydantic-settings) — reads `.env` for `DATABASE_URL`, `DATA_DIR`, `JWT_SECRET`, `EVENT_BUS`, `CORS_ORIGINS`, etc. One instance, created at import time (see the test-isolation note in `tests/conftest.py` below for why that matters). |
+| `main.py` | Builds the FastAPI app, imports every module's models so `Base.metadata` is complete before table creation, mounts every router under `/api/v1`, registers `CORSMiddleware` (added once `edm-ui` made the first cross-origin browser request — ADR-0007), registers the `EdmError -> JSONResponse` exception handler, and (if `settings.enable_scheduler`) starts/stops the background pipeline scheduler in the FastAPI lifespan (ADR-0010). The single file that wires the whole monolith together. |
+| `config.py` | `Settings` (pydantic-settings) — reads `.env` for `DATABASE_URL`, `DATA_DIR`, `JWT_SECRET`, `EVENT_BUS`, `CORS_ORIGINS`, `ENABLE_SCHEDULER`, etc. One instance, created at import time (see the test-isolation note in `tests/conftest.py` below for why that matters). |
 | `database.py` | SQLAlchemy `engine`/`SessionLocal`/`Base`, and the `get_db` FastAPI dependency every router uses. |
 | `events.py` | The in-process event bus (`publish`/`subscribe`) — logs every event and is the swap point for a real Kafka producer later (ADR-0003). Topic names match `02-domain-model.md` Section 5. |
 | `deps.py` | `get_current_user` — decodes the bearer token and loads the `User`, used by every authenticated route. |
-| `permissions.py` | Cross-module authorization helpers (`require_project_access`, `require_source_access`, `require_pipeline_access`, `require_job_access`) that resolve a resource back to its owning Workspace and check the caller's `RoleAssignment`. This is the one file allowed to import service functions from multiple modules, because enforcing access control is inherently cross-cutting. |
+| `permissions.py` | Cross-module authorization helpers (`require_project_access`, `require_source_access`, `require_pipeline_access`, `require_job_access`, `require_notebook_access`) that resolve a resource back to its owning Workspace and check the caller's `RoleAssignment`. This is the one file allowed to import service functions from multiple modules, because enforcing access control is inherently cross-cutting. |
 | `secrets.py` | `encrypt_credentials`/`decrypt_credentials` — Fernet symmetric encryption keyed from `SECRET_ENCRYPTION_KEY`, used by `edm-source` to store real credentials (Oracle/S3/ServiceNow/Jira/Confluence) without Vault. See [ADR-0009](adr/0009-encrypted-secrets-and-enterprise-connectors.md). |
+| `sandbox.py` | `execute_code_cells(df, code_blocks)` — runs notebook/pipeline user-authored Python in a separate `multiprocessing` subprocess with a hard timeout, an import allowlist, and a restricted builtins namespace. Defense-in-depth against accidents, not a real security boundary — see [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md). Used by both `edm-notebook` (interactive dev) and the `python_code` pipeline transformation (scheduled/on-demand runs), so the exact same execution semantics apply in both places. |
+| `scheduler.py` | A module-level APScheduler `BackgroundScheduler` singleton. `sync_schedule(pipeline_id, cron)` registers/replaces/removes a pipeline's cron job immediately; `start()`/`shutdown()` are called from `main.py`'s lifespan; the scheduled callback opens its own DB session (it runs outside any request) and calls `run_pipeline(..., trigger="scheduled")`. Gated by `settings.enable_scheduler` so the real scheduler thread never starts during tests (ADR-0010). |
 
 ### `app/modules/core/` — shared kernel, no HTTP surface
 
@@ -114,11 +116,11 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 
 | File | What it does |
 |---|---|
-| `models.py` | `Pipeline` (source, output dataset name/layer, version, status), `Transformation` (ordered steps, JSON parameters) — metadata-driven per Rule 4, not bespoke scripts. |
-| `transformations.py` | The six transformation implementations: `standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows` — each a pure `(DataFrame, parameters) -> DataFrame` function, dispatched by `apply_transformation`. |
-| `schemas.py` | `TransformationCreate/Read`, `PipelineCreate/Read`. |
-| `service.py` | Create/list/get a Pipeline, validating its source and transformation types up front. |
-| `router.py` | `POST/GET /projects/{id}/pipelines`, `GET /pipelines/{id}`. |
+| `models.py` | `Pipeline` (source, output dataset name/layer, version, status, `schedule_cron` — ADR-0010), `Transformation` (ordered steps, JSON parameters) — metadata-driven per Rule 4, not bespoke scripts. |
+| `transformations.py` | Seven transformation implementations: `standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`, and `python_code` (runs notebook-style code through `app.sandbox.execute_code_cells` — the same sandbox `edm-notebook` uses, so code promoted from a notebook behaves identically once scheduled; ADR-0010) — each a pure `(DataFrame, parameters) -> DataFrame` function, dispatched by `apply_transformation`. |
+| `schemas.py` | `TransformationCreate/Read`, `PipelineCreate/Read`, `PipelineScheduleUpdate`. |
+| `service.py` | Create/list/get a Pipeline, validating its source and transformation types up front; `set_schedule` validates the cron expression, persists `schedule_cron`, and calls `app.scheduler.sync_schedule`. |
+| `router.py` | `POST/GET /projects/{id}/pipelines`, `GET /pipelines/{id}`, `PATCH /pipelines/{id}/schedule`. |
 
 ### `app/modules/job/` — pipeline execution
 
@@ -128,6 +130,15 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `schemas.py` | `JobRead`. |
 | `service.py` | `run_pipeline` — the orchestration core: load source data -> apply transformations in order -> if the output Dataset already exists, evaluate its quality rules *before* touching storage (a `blocking` failure raises and the previously published data is left untouched) -> write Parquet via the storage adapter -> create a new Schema version -> record `source->dataset` and `pipeline->dataset` lineage edges -> raise an `Alert` if quality passed with warnings -> mark the Job succeeded, or on any exception (including a quality `blocking` failure) mark it failed and raise a `critical` `Alert` — publishing `pipeline.started`/`completed`/`failed` events throughout. |
 | `router.py` | `POST /pipelines/{id}/jobs` (trigger), `GET /pipelines/{id}/jobs`, `GET /jobs/{id}`. |
+
+### `app/modules/notebook/` — interactive ETL dev (ADR-0010)
+
+| File | What it does |
+|---|---|
+| `models.py` | `Notebook` (project, source, `sample_size`, `status` draft/promoted, `promoted_pipeline_id`) and `NotebookCell` (ordered, `code: str`). Not in the original `02-domain-model.md` — added alongside ADR-0010, same pattern as quality/lineage/alerting (ADR-0005/0006/0008). |
+| `schemas.py` | `NotebookCreate/Read`, `NotebookCellCreate/Update/Read`, `CellRunResult` (status/stdout/preview/row_count/columns/error — never the full untruncated data, only a UI preview), `NotebookRunResult`, `NotebookPromote`. |
+| `service.py` | `add_cell` (auto-increments `order`), `run_notebook` (loads the source, samples `sample_size` rows, runs every cell up to an optional `up_to_cell_id` through `app.sandbox.execute_code_cells`, strips the internal-only full `data` field before returning), `promote_notebook` (concatenates every cell's code with blank-line joins into one `python_code` pipeline transformation via a local import of `pipeline.service.create_pipeline` — kept local specifically to avoid a notebook<->pipeline import cycle, since pipelines never need to import from notebooks). |
+| `router.py` | `POST/GET /projects/{id}/notebooks`, `GET /notebooks/{id}`, `POST /notebooks/{id}/cells`, `PATCH/DELETE /notebooks/{id}/cells/{cell_id}`, `POST /notebooks/{id}/run` (optional `up_to_cell_id` query param), `POST /notebooks/{id}/promote` (returns the new `PipelineRead`). |
 
 ### `app/modules/storage/` — object storage abstraction
 
@@ -191,10 +202,10 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 
 | File | What it covers |
 |---|---|
-| `conftest.py` | The shared `client` fixture — gives every test a fresh SQLite DB and local data directory via FastAPI's `dependency_overrides` (not env vars: `Settings`/the engine are created once at import time, so per-test `monkeypatch.setenv` alone doesn't isolate tests within one pytest process — this fixture is the fix for a real bug that bug caused). |
+| `conftest.py` | The shared `client` fixture — gives every test a fresh SQLite DB and local data directory via FastAPI's `dependency_overrides` (not env vars: `Settings`/the engine are created once at import time, so per-test `monkeypatch.setenv` alone doesn't isolate tests within one pytest process — this fixture is the fix for a real bug that bug caused). Also disables the real APScheduler via `monkeypatch.setattr(settings, "enable_scheduler", False)` directly on the already-constructed `settings` object — an env var alone would be too late, for the same singleton-timing reason (ADR-0010). |
 | `test_golden_path.py` | End-to-end: register -> workspace/project -> source -> upload -> pipeline -> job -> catalog -> query, for both a CSV source and a JSON source with `filter_rows`/`select_columns`. |
 | `test_rbac.py` | Workspace creator becomes owner; non-members get 404 (not 403, to avoid leaking existence) on every workspace-scoped resource; members gain access after being added but can't manage membership themselves. |
-| `test_transformations.py` | Unit tests for each of the six transformation functions. |
+| `test_transformations.py` | Unit tests for each of the seven transformation functions, including `python_code` and a regression test (`test_python_code_does_not_truncate_rows_past_preview_limit`) that locks in the full-data-vs-preview distinction described in ADR-0010. |
 | `test_catalog_tags.py` | Tag add/list/filter/remove; classification update. |
 | `test_sqlite_connector.py` | SQLite source via `table`, and that a non-`SELECT` query is rejected. |
 | `test_quality.py` | A `blocking` rule failure rejects the batch and leaves the previously published dataset's row count unchanged; a `warning` rule failure still publishes but flags `qualityOutcome`. |
@@ -207,6 +218,9 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 | `test_enterprise_connectors.py` | ServiceNow/Jira/Confluence/generic-REST connectors build the right URL, query params, and auth for their system, by patching `rest_client.httpx.Client` to a mock transport and asserting on the requests it actually received. |
 | `test_oracle_connector.py` | DSN/query construction and result-to-DataFrame mapping against a fake `oracledb.connect`; rejects non-`SELECT` queries and invalid table names. No real Oracle instance is available to test against (ADR-0009). |
 | `test_s3_connector.py` | Reads CSV/JSON from a `moto`-mocked S3 bucket (real S3 API emulation, not a hand-rolled mock); falls back to the default AWS credential chain when no explicit credentials are given. |
+| `test_sandbox.py` | The sandbox in isolation, before anything was built on top of it: DataFrame transforms, multi-cell state sharing, stdout capture, blocked imports/builtins, stop-at-first-failure, the hard timeout actually terminating the subprocess, and the "code must leave `df` bound" contract. |
+| `test_notebook.py` | Cells run in order against a sample (not the full source); `up_to_cell_id` stops early; a sandboxed error comes back as a normal 200 with `status: "error"`, not a 500; promote -> run -> query end-to-end (the full dedupe-and-scale scenario, asserting on the actual published rows); promoting with no cells is rejected; non-members get 404. |
+| `test_scheduler.py` | `validate_cron` accepts/rejects expressions; `sync_schedule` registers and removes an APScheduler job; the `PATCH /pipelines/{id}/schedule` endpoint persists and clears `schedule_cron` and rejects garbage cron strings; non-members can't set another project's schedule. (The actual cron *firing* is verified live against a running server in ADR-0010's work, not in this suite — see the backend README.) |
 
 ### Other files in `services/edm-platform/`
 
@@ -214,15 +228,15 @@ endpoints under `/api/v1`). A module never imports another module's `models.py` 
 |---|---|
 | `requirements.txt` | Pinned dependencies — all chosen to have prebuilt Windows wheels (no compiler needed): fastapi, uvicorn, sqlalchemy, pydantic-settings, email-validator, pyjwt, pandas, duckdb, pyarrow, python-multipart, httpx, cryptography, oracledb, boto3, apscheduler, pytest, moto. |
 | `.env.example` | Every setting `config.py` reads, with inline comments on what to change to swap in real Postgres/MinIO/Kafka later. `.env` itself is gitignored. |
-| `README.md` | How to run locally, the golden path as literal `curl`-able steps, connector/transformation/quality-rule reference, test notes. |
+| `README.md` | How to run locally, the golden path as literal `curl`-able steps, connector/transformation/quality-rule reference, test notes, and a no-migrations-yet warning (delete the dev DB after pulling a schema change). |
 
 ## `cli/` — the command-line client
 
 | File | What it does |
 |---|---|
 | `edm_cli/config.py` | Where credentials persist (`~/.edm/credentials.json`) and where the API base URL comes from (`EDM_API_URL` env var, default `localhost:8000`). |
-| `edm_cli/client.py` | `ApiClient` — injects the bearer token, raises `ApiError` with the server's `detail` message on any 4xx/5xx so the CLI can print something readable instead of a stack trace. |
-| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. `source create --connector-type` covers all 9 types; `--connection-config`/`--credentials` take raw JSON strings (credentials encrypted server-side, never echoed back). |
+| `edm_cli/client.py` | `ApiClient` — injects the bearer token, raises `ApiError` with the server's `detail` message on any 4xx/5xx so the CLI can print something readable instead of a stack trace. `post()` accepts an optional `params` dict (needed for `notebook run --up-to-cell-id`, which is a query param on a POST). |
+| `edm_cli/main.py` | Every command, grouped by resource (`auth`, `workspace`, `project`, `source`, `pipeline`, `notebook`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`) — a thin 1:1 mapping onto the REST API, output as pretty-printed JSON. `source create --connector-type` covers all 9 types; `--connection-config`/`--credentials` take raw JSON strings (credentials encrypted server-side, never echoed back). `pipeline schedule --cron <expr>` / `--clear` sets/removes a cron schedule. `notebook create/list/get/add-cell/update-cell/delete-cell/run/promote` covers the full interactive-dev-to-scheduled-pipeline flow (ADR-0010). |
 | `pyproject.toml` | Packages `edm_cli` and registers the `edm` console-script entry point. |
 | `README.md` | Install steps, the golden path as CLI commands, and why this exists (it's what caught the path-handling bug in `app/modules/storage/adapter.py` — see `docs/16-build-roadmap.md`). |
 
@@ -234,7 +248,7 @@ no UI component library (plain CSS in `src/index.css`).
 | File | What it does |
 |---|---|
 | `src/api/client.ts` | The axios instance every API call goes through — a request interceptor injects the bearer token from `localStorage`, a response interceptor turns any error into `ApiError` with the server's `detail` message. |
-| `src/api/types.ts` | TypeScript interfaces mirroring every backend Pydantic schema (`Workspace`, `Source`, `Pipeline`, `Job`, `Dataset`, `QualityRule`, `LineageGraph`, `Alert`, etc.). `ConnectorType` lists all 9 connector types; `FILE_BASED_CONNECTOR_TYPES` (csv/json) is what the UI checks to decide upload-button vs. config-textarea. |
+| `src/api/types.ts` | TypeScript interfaces mirroring every backend Pydantic schema (`Workspace`, `Source`, `Pipeline`, `Job`, `Dataset`, `QualityRule`, `LineageGraph`, `Alert`, `Notebook`, `NotebookCell`, `CellRunResult`, etc.). `ConnectorType` lists all 9 connector types; `FILE_BASED_CONNECTOR_TYPES` (csv/json) is what the UI checks to decide upload-button vs. config-textarea. `Pipeline.schedule_cron` and `TransformationType`'s `python_code` variant back the scheduling and notebook-promotion features (ADR-0010). |
 | `src/api/endpoints.ts` | One typed async function per backend endpoint, grouped by resource in a single file (kept as one file deliberately — splitting into ten near-empty files wasn't worth the navigation overhead at this size). |
 | `src/context/AuthContext.tsx` | `login`/`register`/`logout` + the current `User`; token persisted to `localStorage`, rehydrated via `whoami()` on load. |
 | `src/components/ProtectedRoute.tsx` | Redirects to `/login` when there's no authenticated user; everything under it assumes `useAuth()` returns a real user. |
@@ -244,11 +258,12 @@ no UI component library (plain CSS in `src/index.css`).
 | `src/pages/LoginPage.tsx`, `RegisterPage.tsx` | Auth forms; redirect to `/workspaces` on success. |
 | `src/pages/WorkspacesPage.tsx` | List the caller's workspaces (membership-filtered by the backend, not the UI), create a new one. |
 | `src/pages/WorkspaceDetailPage.tsx` | Projects (list + create) and members (list + add, owner-only enforced server-side) for one workspace. |
-| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for the 2 file-based connector types, generic `connection_config`/`credentials` JSON textareas with per-type placeholder hints for the other 7 — deliberately generic rather than bespoke fields per type, since that doesn't scale past a couple of connector types), a Pipelines tab (create, with an inline repeatable transformation-step builder), and an Alerts tab (status-filterable list, acknowledge/resolve). |
-| `src/pages/PipelineDetailPage.tsx` | Transformation list, a "Run pipeline" button, and job history (status, rows in/out, quality outcome, link to the produced dataset) — polls while a job is `running`/`queued`. |
+| `src/pages/ProjectDetailPage.tsx` | The densest page: a Sources tab (create, upload for the 2 file-based connector types, generic `connection_config`/`credentials` JSON textareas with per-type placeholder hints for the other 7 — deliberately generic rather than bespoke fields per type, since that doesn't scale past a couple of connector types), a Pipelines tab (create, with an inline repeatable transformation-step builder — deliberately excludes `python_code` from the type dropdown since notebooks are the intended authoring path for code transforms, not a one-line JSON parameters field), a Notebooks tab (create, with a source picker and sample-size input; links into `NotebookDetailPage`), and an Alerts tab (status-filterable list, acknowledge/resolve). |
+| `src/pages/PipelineDetailPage.tsx` | Transformation list, a Schedule section (set/clear a cron expression, shows the current schedule or "Not scheduled"), a "Run pipeline" button, and job history (status, trigger, rows in/out, quality outcome, link to the produced dataset) — polls while a job is `running`/`queued`. |
+| `src/pages/NotebookDetailPage.tsx` | Per-cell editors (textarea, saved on blur via `PATCH`), each with its own "Run up to here" and "Delete cell" buttons and, once run, that cell's stdout/error/preview-table/row-count; a "Run all cells" button that runs every cell and populates every cell's result at once; a "Promote to a scheduled pipeline" form (output dataset name/layer) that navigates to the resulting `PipelineDetailPage` on success. |
 | `src/pages/CatalogPage.tsx` | Dataset search (by name substring, optionally scoped to a project via `?project_id=`). |
 | `src/pages/DatasetDetailPage.tsx` | Everything about one dataset in one place: schema, tags + classification (editable), data quality (add/remove rules, run history), lineage (upstream/downstream), and a SQL query runner against it — one component per concern (`SchemaSection`, `TagsAndClassificationSection`, `QualitySection`, `LineageSection`, `QuerySection`). |
-| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, **a second source via the generic connection_config/credentials fields (oracle) with an explicit assertion that the credential string never appears in the page**, pipeline (with transformations), run, view dataset, tag, classify, add a quality rule, check lineage, run a query, then deliberately trigger a failing pipeline and walk its alert through acknowledge -> resolve — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
+| `e2e/smoke.mjs` | A Playwright script (headless Chromium) that drives the *entire* golden path through real clicks/fills — register, workspace, project, source, upload, **a second source via the generic connection_config/credentials fields (oracle) with an explicit assertion that the credential string never appears in the page**, pipeline (with transformations), run, set/clear a cron schedule, view dataset, tag, classify, add a quality rule, check lineage, run a query, create a notebook, write and run two cells that share state (a dedupe feeding a sum, proving cell-to-cell state passing), promote it to a pipeline and run that pipeline too, then deliberately trigger a failing pipeline and walk its alert through acknowledge -> resolve — screenshotting every step and failing on any browser console error. This is what actually caught the CORS bug; see `ui/README.md`. Not wired into CI yet (would need both the backend and Vite dev server running simultaneously). |
 | `package.json` | `npm run dev`/`build`/`e2e`/`e2e:install`. Dependencies: `react-router-dom` (routing), `@tanstack/react-query` (server-state caching/mutations), `axios` (HTTP). Dev-only: `playwright` (e2e), `vite`, `typescript`. |
 | `.env.example` | `VITE_API_URL`, defaulting to `http://localhost:8000/api/v1`. |
 | `README.md` | Run instructions, route map, e2e instructions, and the CORS bug story. |

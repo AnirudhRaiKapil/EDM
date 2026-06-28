@@ -1,6 +1,7 @@
 import pandas as pd
 
 from app.modules.core.exceptions import ValidationFailedError
+from app.sandbox import execute_code_cells
 
 SUPPORTED_TRANSFORMATION_TYPES = [
     "standardize",
@@ -9,6 +10,7 @@ SUPPORTED_TRANSFORMATION_TYPES = [
     "rename_columns",
     "fill_nulls",
     "filter_rows",
+    "python_code",
 ]
 
 
@@ -78,6 +80,20 @@ def _filter_rows(df: pd.DataFrame, parameters: dict) -> pd.DataFrame:
     return df[operators[operator](df[column])].reset_index(drop=True)
 
 
+def _python_code(df: pd.DataFrame, parameters: dict) -> pd.DataFrame:
+    """Runs notebook-authored code (see app/sandbox.py and app/modules/notebook/) as a
+    pipeline step, so code promoted from a notebook behaves identically scheduled as it
+    did in interactive dev -- same restricted execution, same timeout."""
+    code = parameters.get("code")
+    if not code:
+        raise ValidationFailedError("python_code requires a 'code' parameter")
+    results = execute_code_cells(df, [code])
+    result = results[0]
+    if result["status"] != "ok":
+        raise ValidationFailedError(f"python_code failed: {result['error']}")
+    return pd.DataFrame(result["data"], columns=result["columns"])
+
+
 _HANDLERS = {
     "standardize": _standardize,
     "dedupe": _dedupe,
@@ -85,6 +101,7 @@ _HANDLERS = {
     "rename_columns": _rename_columns,
     "fill_nulls": _fill_nulls,
     "filter_rows": _filter_rows,
+    "python_code": _python_code,
 }
 
 

@@ -35,8 +35,13 @@ class PipelineRead(BaseModel):
     output_dataset_name: str
     output_layer: str
     status: str
+    schedule_cron: str | None
     owner_id: str
     created_at: datetime
     transformations: list[TransformationRead]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PipelineScheduleUpdate(BaseModel):
+    cron: str | None

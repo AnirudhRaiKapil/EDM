@@ -120,6 +120,16 @@ try {
   await page.waitForSelector("text=succeeded", { timeout: 15000 });
   await shot(page, "job-succeeded");
 
+  // Pipeline scheduling: set a cron, confirm it's shown and persisted, then clear it.
+  await page.fill('input[placeholder*="Cron expression"]', "0 * * * *");
+  await page.click('button:has-text("Set schedule")');
+  await page.waitForSelector("code:has-text('0 * * * *')");
+  await shot(page, "pipeline-schedule-set");
+
+  await page.click('button:has-text("Clear schedule")');
+  await page.waitForSelector("text=Not scheduled");
+  await shot(page, "pipeline-schedule-cleared");
+
   await page.click("text=view");
   await page.waitForURL(/\/datasets\/[^/]+$/);
   await page.waitForSelector("text=email");
@@ -149,6 +159,48 @@ try {
   await page.click('button:has-text("Run query")');
   await page.waitForSelector("table.data-table:has-text('lin@example.com')", { timeout: 10000 });
   await shot(page, "query-result");
+
+  // Notebook: write code in cells, run it interactively against a sample, then promote
+  // it into a real pipeline and run that pipeline too.
+  await page.goto(projectUrl);
+  await page.click('button:has-text("Notebooks")');
+  await page.waitForSelector('input[placeholder="Notebook name"]');
+
+  await page.fill('input[placeholder="Notebook name"]', "explore-events");
+  await page.locator(".inline-form select").selectOption({ label: "events-csv" });
+  await page.click('button:has-text("Create notebook")');
+  await page.waitForSelector("text=explore-events");
+  await shot(page, "notebook-created");
+
+  await page.click("text=explore-events");
+  await page.waitForURL(/\/notebooks\/[^/]+$/);
+
+  await page.click('button:has-text("+ Add cell")');
+  await page.waitForSelector(".card textarea");
+  await page.locator(".card textarea").nth(0).fill("df = df.drop_duplicates()");
+  await page.locator(".card textarea").nth(0).blur();
+
+  await page.click('button:has-text("+ Add cell")');
+  await page.waitForFunction(() => document.querySelectorAll(".card textarea").length === 2);
+  await page.locator(".card textarea").nth(1).fill("print(df['amount'].sum())");
+  await page.locator(".card textarea").nth(1).blur();
+  await shot(page, "notebook-cells-written");
+
+  await page.click('button:has-text("Run all cells")');
+  // Cell 2 runs against cell 1's *output*: dedupe drops one Ada row first, so the sum
+  // here is over the remaining 91 + 77, proving cells share state in order.
+  await page.waitForSelector("text=168", { timeout: 10000 });
+  await shot(page, "notebook-run-results");
+
+  await page.fill('section input[placeholder="Output dataset name"]', "events_deduped");
+  await page.click('button:has-text("Promote")');
+  await page.waitForURL(/\/pipelines\/[^/]+$/, { timeout: 10000 });
+  await page.waitForSelector("text=python_code");
+  await shot(page, "notebook-promoted-to-pipeline");
+
+  await page.click('button:has-text("Run pipeline")');
+  await page.waitForSelector("text=succeeded", { timeout: 15000 });
+  await shot(page, "promoted-pipeline-job-succeeded");
 
   // Trigger a job failure (bad transformation parameters) to exercise alerting end to end.
   await page.goto(projectUrl);

@@ -19,6 +19,7 @@ class Pipeline(Base, UUIDPrimaryKeyMixin, TimestampMixin, OwnedMixin):
     output_dataset_name: Mapped[str] = mapped_column(String(255), nullable=False)
     output_layer: Mapped[str] = mapped_column(String(20), nullable=False, default="silver")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    schedule_cron: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     transformations: Mapped[list["Transformation"]] = relationship(
         back_populates="pipeline", order_by="Transformation.order", cascade="all, delete-orphan"

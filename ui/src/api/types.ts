@@ -64,7 +64,8 @@ export type TransformationType =
   | "select_columns"
   | "rename_columns"
   | "fill_nulls"
-  | "filter_rows";
+  | "filter_rows"
+  | "python_code";
 
 export interface Transformation {
   id: string;
@@ -82,9 +83,40 @@ export interface Pipeline {
   output_dataset_name: string;
   output_layer: "bronze" | "silver" | "gold";
   status: string;
+  schedule_cron: string | null;
   owner_id: string;
   created_at: string;
   transformations: Transformation[];
+}
+
+export interface NotebookCell {
+  id: string;
+  notebook_id: string;
+  order: number;
+  code: string;
+}
+
+export interface Notebook {
+  id: string;
+  project_id: string;
+  source_id: string;
+  name: string;
+  sample_size: number;
+  status: "draft" | "promoted";
+  promoted_pipeline_id: string | null;
+  owner_id: string;
+  created_at: string;
+  cells: NotebookCell[];
+}
+
+export interface CellRunResult {
+  cell_id: string;
+  status: "ok" | "error" | "skipped";
+  stdout: string;
+  preview: Record<string, unknown>[];
+  row_count: number | null;
+  columns: string[] | null;
+  error: string | null;
 }
 
 export interface Job {

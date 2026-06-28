@@ -58,3 +58,17 @@ def get_pipeline(db: Session, pipeline_id: str) -> Pipeline:
     if pipeline is None:
         raise NotFoundError(f"pipeline '{pipeline_id}' not found")
     return pipeline
+
+
+def set_schedule(db: Session, pipeline: Pipeline, cron_expression: str | None) -> Pipeline:
+    from app.scheduler import sync_schedule, validate_cron
+
+    if cron_expression:
+        validate_cron(cron_expression)
+    pipeline.schedule_cron = cron_expression
+    db.add(pipeline)
+    db.commit()
+    db.refresh(pipeline)
+    sync_schedule(pipeline.id, cron_expression)
+    publish("pipeline.schedule_updated", {"id": pipeline.id, "cron": cron_expression})
+    return pipeline

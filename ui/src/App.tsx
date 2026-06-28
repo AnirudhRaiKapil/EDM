@@ -4,6 +4,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { CatalogPage } from "./pages/CatalogPage";
 import { DatasetDetailPage } from "./pages/DatasetDetailPage";
 import { LoginPage } from "./pages/LoginPage";
+import { NotebookDetailPage } from "./pages/NotebookDetailPage";
 import { PipelineDetailPage } from "./pages/PipelineDetailPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { RegisterPage } from "./pages/RegisterPage";
@@ -26,6 +27,7 @@ export default function App() {
             element={<ProjectDetailPage />}
           />
           <Route path="/pipelines/:pipelineId" element={<PipelineDetailPage />} />
+          <Route path="/notebooks/:notebookId" element={<NotebookDetailPage />} />
           <Route path="/catalog" element={<CatalogPage />} />
           <Route path="/datasets/:datasetId" element={<DatasetDetailPage />} />
         </Route>

@@ -1,11 +1,12 @@
 # edm-platform
 
 The MVP modular monolith: `edm-core`, `edm-auth`, `edm-workspace`, `edm-source`,
-`edm-ingestion`, `edm-pipeline`, `edm-job`, `edm-storage`, `edm-catalog`, `edm-metadata`,
-`edm-quality`, `edm-lineage`, `edm-alerting`, and `edm-query` as internal Python packages behind
-one FastAPI app (`edm-quality`, `edm-lineage`, and `edm-alerting` were originally scoped as V2 in
-01-product-architecture.md but were each pulled forward because they served explicit,
-heavily-emphasized requirements in 00-vision-and-requirements.md — see ADR-0005/0006/0008). See
+`edm-ingestion`, `edm-pipeline`, `edm-notebook`, `edm-job`, `edm-storage`, `edm-catalog`,
+`edm-metadata`, `edm-quality`, `edm-lineage`, `edm-alerting`, and `edm-query` as internal Python
+packages behind one FastAPI app (`edm-quality`, `edm-lineage`, and `edm-alerting` were originally
+scoped as V2 in 01-product-architecture.md but were each pulled forward because they served
+explicit, heavily-emphasized requirements in 00-vision-and-requirements.md — see
+ADR-0005/0006/0008; `edm-notebook` wasn't in the original module map at all — see ADR-0010). See
 [ADR-0002](../../docs/adr/0002-python-fastapi-modular-monolith.md) and
 [ADR-0003](../../docs/adr/0003-trimmed-phase-1-stack.md) for why, and
 [02-domain-model.md](../../docs/02-domain-model.md) for the entities these modules implement.
@@ -20,6 +21,13 @@ copy .env.example .env
 ```
 
 API docs: http://localhost:8000/docs · Health check: http://localhost:8000/health
+
+**No migrations exist yet** (no Alembic — `Base.metadata.create_all()` only creates tables that
+don't exist; it never alters an existing one). Every time a model gains a column, delete your
+local `edm_platform.db` (and `data/`) and let it recreate from scratch, or your server will fail
+on startup with `no such column: ...` the first time something queries that table — this is
+exactly the bug that motivated this warning (the scheduler querying `Pipeline.schedule_cron`
+against a pre-existing dev DB file that predated the column).
 
 ## The golden path (matches the MVP definition in docs/16-build-roadmap.md)
 
@@ -56,7 +64,31 @@ ServiceNow/Jira/Confluence/Oracle account or Docker-based emulator available in 
 — only S3, via `moto`, gets genuine API-level verification).
 
 ### Transformation types (`app/modules/pipeline/transformations.py`)
-`standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`
+`standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`,
+`python_code` (runs `{"code": "..."}` through the restricted sandbox — see Notebooks below;
+almost always reached via promoting a notebook rather than hand-authored)
+
+### Notebooks (`app/modules/notebook/`) and pipeline scheduling — ADR-0010
+Write Python in ordered cells, run them against a sample of a Source's data, then promote into a
+real scheduled Pipeline:
+- `POST /api/v1/projects/{id}/notebooks` `{"name", "source_id", "sample_size"?}` (default 100 rows)
+- `POST /api/v1/notebooks/{id}/cells` `{"code"}`, `PATCH`/`DELETE .../cells/{cell_id}`
+- `POST /api/v1/notebooks/{id}/run` (optional `?up_to_cell_id=...`) -> each cell's
+  status/stdout/preview/error, run against `sample_size` rows of the source
+- `POST /api/v1/notebooks/{id}/promote` `{"output_dataset_name", "output_layer"?}` -> concatenates
+  every cell's code into one `python_code` Pipeline transformation and creates that Pipeline
+
+Code runs in `app/sandbox.py`: a separate `multiprocessing` subprocess, a 15s hard timeout, an
+import allowlist (`pandas`/`numpy`/`re`/`datetime`/`math`/`json`/`statistics`/`decimal`), and a
+restricted builtins namespace. **This is defense-in-depth against accidents, not a security
+boundary against a determined attacker** — see ADR-0010 for the full reasoning on why, and what
+would be needed for real isolation (Docker, which ADR-0004 ruled out here).
+
+Pipelines can run on a cron schedule instead of (or in addition to) on demand:
+`PATCH /api/v1/pipelines/{id}/schedule` `{"cron": "0 * * * *"}` (or `{"cron": null}` to clear).
+A background APScheduler instance (`app/scheduler.py`) fires `run_pipeline(..., trigger=
+"scheduled")` on its own DB session at each tick — set `ENABLE_SCHEDULER=false` to disable it
+entirely (tests do this; see `tests/conftest.py`).
 
 ### Data quality (`app/modules/quality/`)
 Rules attach to a Dataset (so only after its first job run): `POST
@@ -102,7 +134,12 @@ on quality warnings, the acknowledge/resolve lifecycle, and that non-members can
 `test_secrets.py` covers the encryption round-trip and that credentials never leak via the API;
 `test_rest_client.py` covers the generic REST pagination/auth engine; `test_enterprise_connectors.py`,
 `test_oracle_connector.py`, and `test_s3_connector.py` cover the new connectors (S3 against a
-real in-memory `moto` S3 emulation; the rest against a mocked transport/connection only).
+real in-memory `moto` S3 emulation; the rest against a mocked transport/connection only);
+`test_sandbox.py` covers the restricted code executor in isolation (blocked imports/builtins,
+timeout, multi-cell state sharing); `test_notebook.py` covers the full notebook lifecycle
+including promote -> run -> query end to end; `test_scheduler.py` covers cron validation and
+schedule set/clear via the API (the actual cron *firing* was verified live against a running
+server, not in this suite — see ADR-0010).
 
 ## Swapping in real infrastructure later
 

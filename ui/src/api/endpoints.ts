@@ -1,11 +1,14 @@
 import { apiClient } from "./client";
 import type {
   Alert,
+  CellRunResult,
   Dataset,
   DatasetDetail,
   Job,
   LineageGraph,
   Member,
+  Notebook,
+  NotebookCell,
   Pipeline,
   Project,
   QualityRule,
@@ -134,6 +137,11 @@ export async function runPipeline(pipelineId: string) {
   return data;
 }
 
+export async function setPipelineSchedule(pipelineId: string, cron: string | null) {
+  const { data } = await apiClient.patch<Pipeline>(`/pipelines/${pipelineId}/schedule`, { cron });
+  return data;
+}
+
 export async function listJobs(pipelineId: string) {
   const { data } = await apiClient.get<Job[]>(`/pipelines/${pipelineId}/jobs`);
   return data;
@@ -220,5 +228,69 @@ export async function updateAlertStatus(alertId: string, status: string) {
 
 export async function runQuery(datasetId: string, sql: string) {
   const { data } = await apiClient.post<QueryResult>("/query", { dataset_id: datasetId, sql });
+  return data;
+}
+
+export async function listNotebooks(projectId: string) {
+  const { data } = await apiClient.get<Notebook[]>(`/projects/${projectId}/notebooks`);
+  return data;
+}
+
+export async function createNotebook(
+  projectId: string,
+  name: string,
+  sourceId: string,
+  sampleSize: number,
+) {
+  const { data } = await apiClient.post<Notebook>(`/projects/${projectId}/notebooks`, {
+    name,
+    source_id: sourceId,
+    sample_size: sampleSize,
+  });
+  return data;
+}
+
+export async function getNotebook(notebookId: string) {
+  const { data } = await apiClient.get<Notebook>(`/notebooks/${notebookId}`);
+  return data;
+}
+
+export async function addNotebookCell(notebookId: string, code: string) {
+  const { data } = await apiClient.post<NotebookCell>(`/notebooks/${notebookId}/cells`, { code });
+  return data;
+}
+
+export async function updateNotebookCell(notebookId: string, cellId: string, code: string) {
+  const { data } = await apiClient.patch<NotebookCell>(
+    `/notebooks/${notebookId}/cells/${cellId}`,
+    { code },
+  );
+  return data;
+}
+
+export async function deleteNotebookCell(notebookId: string, cellId: string) {
+  await apiClient.delete(`/notebooks/${notebookId}/cells/${cellId}`);
+}
+
+export async function runNotebook(notebookId: string, upToCellId?: string) {
+  const { data } = await apiClient.post<{ results: CellRunResult[] }>(
+    `/notebooks/${notebookId}/run`,
+    undefined,
+    { params: upToCellId ? { up_to_cell_id: upToCellId } : undefined },
+  );
+  return data.results;
+}
+
+export async function promoteNotebook(
+  notebookId: string,
+  outputDatasetName: string,
+  outputLayer: string,
+  pipelineName?: string,
+) {
+  const { data } = await apiClient.post<Pipeline>(`/notebooks/${notebookId}/promote`, {
+    output_dataset_name: outputDatasetName,
+    output_layer: outputLayer,
+    pipeline_name: pipelineName,
+  });
   return data;
 }

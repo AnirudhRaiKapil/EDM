@@ -30,7 +30,8 @@ touching Kafka/Spark/Postgres directly):
 2. Register a Source (start with: file upload / CSV, and one database type).
 3. Define a Pipeline with at least one Transformation (e.g. standardize + dedupe) targeting a
    Dataset in the Bronze/Silver layer.
-4. Trigger a Job (manual first, scheduled second) and watch it succeed/fail.
+4. Trigger a Job (manual first, scheduled second — both done; see
+   [ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md)) and watch it succeed/fail.
 5. Find the resulting Dataset in the Catalog and query it.
 
 That vertical slice exercises `edm-auth`, `edm-workspace`, `edm-source`, `edm-ingestion`,
@@ -81,8 +82,24 @@ backed by encrypted-at-rest credential storage (`Source.encrypted_credentials`, 
 Vault remains out of reach (ADR-0003/0004). S3 is verified against a real in-memory S3 emulation
 (`moto`); Oracle/ServiceNow/Jira/Confluence/generic-REST are verified at the request-building
 level only (mocked transport/connection) — there's no real account or Docker-based emulator
-available in this environment to integration-test the others against. `edm-governance` (beyond
-RBAC), `edm-notification`, `edm-monitoring`, `edm-ai`, and the SDK remain unbuilt. See
-[17-codebase-map.md](17-codebase-map.md) for the
-file-level picture, kept current
+available in this environment to integration-test the others against.
+
+`edm-notebook` is built ([ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md)): an
+interactive, code-first ETL dev experience — write Python in ordered cells, run them against a
+sample of a Source's data through a restricted `multiprocessing`-isolated sandbox (import
+allowlist, restricted builtins, hard timeout), see each cell's stdout/preview/error immediately,
+then promote the notebook into a real `python_code` Pipeline transformation that runs the exact
+same code against the full dataset. `edm-pipeline` gained cron scheduling on top of this
+(`Pipeline.schedule_cron`, backed by APScheduler) — verified not just by unit-testing the
+registration logic but by actually setting a live `* * * * *` schedule against a running server
+and watching a `trigger: "scheduled"` job appear at the real minute boundary. Both features are
+covered end to end through every interface this platform exposes: pytest (`test_sandbox.py`,
+`test_notebook.py`, `test_scheduler.py`), `edm-cli` (`edm notebook ...`, `edm pipeline schedule
+...`), and `edm-ui` (a Notebooks tab + notebook detail page with per-cell run/promote controls, a
+Schedule section on the pipeline detail page) — all driven against a live backend, with the CLI
+and UI flows verified by hand and via an extended `ui/e2e/smoke.mjs`, per this project's standing
+rule of verifying through a real interface rather than trusting `pytest`'s `TestClient` alone.
+
+`edm-governance` (beyond RBAC), `edm-notification`, `edm-monitoring`, `edm-ai`, and the SDK remain
+unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept current
 per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).

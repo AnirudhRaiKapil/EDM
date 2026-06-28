@@ -248,6 +248,108 @@ def pipeline_run(pipeline_id):
     echo_json(ApiClient().post(f"/pipelines/{pipeline_id}/jobs"))
 
 
+@pipeline.command("schedule")
+@click.option("--pipeline-id", required=True)
+@click.option("--cron", default=None, help='Standard 5-field cron, e.g. "0 * * * *" for hourly.')
+@click.option("--clear", is_flag=True, help="Remove the schedule instead of setting one.")
+@handle_errors
+def pipeline_schedule(pipeline_id, cron, clear):
+    if clear:
+        cron = None
+    elif not cron:
+        raise click.UsageError("pass --cron '<expression>' or --clear")
+    echo_json(ApiClient().patch(f"/pipelines/{pipeline_id}/schedule", json={"cron": cron}))
+
+
+# --- notebook -----------------------------------------------------------
+
+@cli.group()
+def notebook():
+    """Write and run code interactively against a sample of a source's data,
+    then promote it into a scheduled pipeline once it works."""
+
+
+@notebook.command("create")
+@click.option("--project-id", required=True)
+@click.option("--name", required=True)
+@click.option("--source-id", required=True)
+@click.option("--sample-size", default=100, type=int, help="Rows to sample for fast iteration.")
+@handle_errors
+def notebook_create(project_id, name, source_id, sample_size):
+    echo_json(
+        ApiClient().post(
+            f"/projects/{project_id}/notebooks",
+            json={"name": name, "source_id": source_id, "sample_size": sample_size},
+        )
+    )
+
+
+@notebook.command("list")
+@click.option("--project-id", required=True)
+@handle_errors
+def notebook_list(project_id):
+    echo_json(ApiClient().get(f"/projects/{project_id}/notebooks"))
+
+
+@notebook.command("get")
+@click.option("--notebook-id", required=True)
+@handle_errors
+def notebook_get(notebook_id):
+    echo_json(ApiClient().get(f"/notebooks/{notebook_id}"))
+
+
+@notebook.command("add-cell")
+@click.option("--notebook-id", required=True)
+@click.option("--code", required=True, help="Python source for the cell (pandas available as pd, df is the dataframe).")
+@click.option("--order", default=None, type=int)
+@handle_errors
+def notebook_add_cell(notebook_id, code, order):
+    payload = {"code": code}
+    if order is not None:
+        payload["order"] = order
+    echo_json(ApiClient().post(f"/notebooks/{notebook_id}/cells", json=payload))
+
+
+@notebook.command("update-cell")
+@click.option("--notebook-id", required=True)
+@click.option("--cell-id", required=True)
+@click.option("--code", required=True)
+@handle_errors
+def notebook_update_cell(notebook_id, cell_id, code):
+    echo_json(ApiClient().patch(f"/notebooks/{notebook_id}/cells/{cell_id}", json={"code": code}))
+
+
+@notebook.command("delete-cell")
+@click.option("--notebook-id", required=True)
+@click.option("--cell-id", required=True)
+@handle_errors
+def notebook_delete_cell(notebook_id, cell_id):
+    ApiClient().delete(f"/notebooks/{notebook_id}/cells/{cell_id}")
+    click.echo("Cell deleted")
+
+
+@notebook.command("run")
+@click.option("--notebook-id", required=True)
+@click.option("--up-to-cell-id", default=None, help="Stop after this cell instead of running all of them.")
+@handle_errors
+def notebook_run(notebook_id, up_to_cell_id):
+    params = {"up_to_cell_id": up_to_cell_id} if up_to_cell_id else None
+    echo_json(ApiClient().post(f"/notebooks/{notebook_id}/run", params=params))
+
+
+@notebook.command("promote")
+@click.option("--notebook-id", required=True)
+@click.option("--output-dataset-name", required=True)
+@click.option("--output-layer", default="silver")
+@click.option("--pipeline-name", default=None)
+@handle_errors
+def notebook_promote(notebook_id, output_dataset_name, output_layer, pipeline_name):
+    payload = {"output_dataset_name": output_dataset_name, "output_layer": output_layer}
+    if pipeline_name:
+        payload["pipeline_name"] = pipeline_name
+    echo_json(ApiClient().post(f"/notebooks/{notebook_id}/promote", json=payload))
+
+
 # --- job ----------------------------------------------------------------
 
 @cli.group()

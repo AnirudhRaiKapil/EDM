@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as api from "../api/endpoints";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -25,6 +26,15 @@ export function PipelineDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["jobs", pipelineId] }),
   });
 
+  const [cron, setCron] = useState("");
+  const setSchedule = useMutation({
+    mutationFn: (value: string | null) => api.setPipelineSchedule(pipelineId, value),
+    onSuccess: () => {
+      setCron("");
+      queryClient.invalidateQueries({ queryKey: ["pipeline", pipelineId] });
+    },
+  });
+
   return (
     <div className="page">
       <Link to="/workspaces" className="back-link">
@@ -45,6 +55,38 @@ export function PipelineDetailPage() {
           ))}
           {pipeline?.transformations.length === 0 && <p className="muted">No transformations — passthrough.</p>}
         </ol>
+      </section>
+
+      <section>
+        <h2>Schedule</h2>
+        {pipeline?.schedule_cron ? (
+          <p>
+            Runs on cron schedule <code>{pipeline.schedule_cron}</code>{" "}
+            <button onClick={() => setSchedule.mutate(null)} disabled={setSchedule.isPending}>
+              Clear schedule
+            </button>
+          </p>
+        ) : (
+          <p className="muted">Not scheduled — runs only on demand.</p>
+        )}
+        <form
+          className="inline-form"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            setSchedule.mutate(cron);
+          }}
+        >
+          <input
+            placeholder='Cron expression, e.g. "0 * * * *" (hourly)'
+            value={cron}
+            onChange={(e) => setCron(e.target.value)}
+            required
+          />
+          <button type="submit" disabled={setSchedule.isPending}>
+            Set schedule
+          </button>
+        </form>
+        <ErrorBanner error={setSchedule.error} />
       </section>
 
       <section>

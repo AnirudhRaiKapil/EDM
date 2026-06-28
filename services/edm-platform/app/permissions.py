@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.modules.auth import service as auth_service
 from app.modules.auth.service import WORKSPACE_ROLES
 from app.modules.job import service as job_service
+from app.modules.notebook import service as notebook_service
 from app.modules.pipeline import service as pipeline_service
 from app.modules.source import service as source_service
 from app.modules.workspace import service as workspace_service
@@ -34,3 +35,10 @@ def require_job_access(
 ) -> str:
     job = job_service.get_job(db, job_id)
     return require_pipeline_access(db, user_id, job.pipeline_id, allowed)
+
+
+def require_notebook_access(
+    db: Session, user_id: str, notebook_id: str, allowed: list[str] = WORKSPACE_ROLES
+) -> str:
+    notebook = notebook_service.get_notebook(db, notebook_id)
+    return require_project_access(db, user_id, notebook.project_id, allowed)

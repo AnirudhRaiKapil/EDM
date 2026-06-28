@@ -5,7 +5,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.modules.auth.models import User
 from app.modules.pipeline import service
-from app.modules.pipeline.schemas import PipelineCreate, PipelineRead
+from app.modules.pipeline.schemas import PipelineCreate, PipelineRead, PipelineScheduleUpdate
 from app.permissions import require_pipeline_access, require_project_access
 
 router = APIRouter(tags=["pipeline"])
@@ -49,3 +49,15 @@ def get_pipeline(
 ):
     require_pipeline_access(db, current_user.id, pipeline_id)
     return service.get_pipeline(db, pipeline_id)
+
+
+@router.patch("/pipelines/{pipeline_id}/schedule", response_model=PipelineRead)
+def set_schedule(
+    pipeline_id: str,
+    payload: PipelineScheduleUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_pipeline_access(db, current_user.id, pipeline_id)
+    pipeline = service.get_pipeline(db, pipeline_id)
+    return service.set_schedule(db, pipeline, payload.cron)

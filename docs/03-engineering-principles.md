@@ -43,6 +43,15 @@ Transformations:
 
 The platform executes based on metadata, not embedded logic.
 
+One intentional, narrow exception: the `python_code` transformation type
+([ADR-0010](adr/0010-notebook-sandbox-and-pipeline-scheduling.md)) lets a Transformation's
+`parameters.code` hold arbitrary user-authored Python, run through a restricted sandbox. This
+exists because a fixed menu of declarative transformation types can't express every
+transformation a user might need — but it's still metadata-driven at the Pipeline level (the
+*type* of step is still `python_code`, looked up the same way every other transformation type is)
+and is reachable almost always by promoting an `edm-notebook` Notebook, not by hand-authoring
+a transformation's JSON.
+
 ## Rule 5 — Configuration Over Code
 Users configure the platform through UI/API instead of writing code wherever possible: creating
 pipelines, registering sources, configuring schedules, defining quality rules, setting

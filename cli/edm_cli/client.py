@@ -33,8 +33,14 @@ class ApiClient:
     def get(self, path: str, params: dict | None = None):
         return self._handle(self._client.get(path, params=params))
 
-    def post(self, path: str, json: dict | None = None, files: dict | None = None):
-        return self._handle(self._client.post(path, json=json, files=files))
+    def post(
+        self,
+        path: str,
+        json: dict | None = None,
+        files: dict | None = None,
+        params: dict | None = None,
+    ):
+        return self._handle(self._client.post(path, json=json, files=files, params=params))
 
     def patch(self, path: str, json: dict | None = None):
         return self._handle(self._client.patch(path, json=json))

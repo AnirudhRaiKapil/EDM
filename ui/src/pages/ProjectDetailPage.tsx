@@ -315,6 +315,86 @@ function PipelinesTab({ projectId }: { projectId: string }) {
   );
 }
 
+function NotebooksTab({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const { data: notebooks } = useQuery({
+    queryKey: ["notebooks", projectId],
+    queryFn: () => api.listNotebooks(projectId),
+  });
+  const { data: sources } = useQuery({
+    queryKey: ["sources", projectId],
+    queryFn: () => api.listSources(projectId),
+  });
+
+  const [name, setName] = useState("");
+  const [sourceId, setSourceId] = useState("");
+  const [sampleSize, setSampleSize] = useState(100);
+  const createNotebook = useMutation({
+    mutationFn: () => api.createNotebook(projectId, name, sourceId, sampleSize),
+    onSuccess: () => {
+      setName("");
+      queryClient.invalidateQueries({ queryKey: ["notebooks", projectId] });
+    },
+  });
+
+  return (
+    <div>
+      <p className="muted">
+        Write pandas code in cells, run it against a small sample of a source's data to iterate
+        quickly, then promote it into a real scheduled pipeline once it works.
+      </p>
+      <form
+        className="inline-form"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          createNotebook.mutate();
+        }}
+      >
+        <input
+          placeholder="Notebook name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} required>
+          <option value="">Select source...</option>
+          {sources?.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="number"
+          min={1}
+          max={10000}
+          value={sampleSize}
+          onChange={(e) => setSampleSize(Number(e.target.value))}
+          style={{ width: 90 }}
+          title="Sample size (rows)"
+        />
+        <button type="submit" disabled={createNotebook.isPending}>
+          Create notebook
+        </button>
+      </form>
+      <ErrorBanner error={createNotebook.error} />
+
+      <ul className="card-list">
+        {notebooks?.map((notebook) => (
+          <li key={notebook.id} className="card">
+            <Link to={`/notebooks/${notebook.id}`}>
+              <strong>{notebook.name}</strong>
+              <span className="muted"> — {notebook.cells.length} cell(s)</span>
+            </Link>{" "}
+            <StatusBadge value={notebook.status} />
+          </li>
+        ))}
+        {notebooks?.length === 0 && <p className="muted">No notebooks yet.</p>}
+      </ul>
+    </div>
+  );
+}
+
 function AlertsTab({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>("open");
@@ -367,7 +447,7 @@ function AlertsTab({ projectId }: { projectId: string }) {
 
 export function ProjectDetailPage() {
   const { workspaceId, projectId } = useParams<{ workspaceId: string; projectId: string }>();
-  const [tab, setTab] = useState<"sources" | "pipelines" | "alerts">("sources");
+  const [tab, setTab] = useState<"sources" | "pipelines" | "notebooks" | "alerts">("sources");
   if (!workspaceId || !projectId) return null;
 
   return (
@@ -384,6 +464,9 @@ export function ProjectDetailPage() {
         <button className={tab === "pipelines" ? "tab active" : "tab"} onClick={() => setTab("pipelines")}>
           Pipelines
         </button>
+        <button className={tab === "notebooks" ? "tab active" : "tab"} onClick={() => setTab("notebooks")}>
+          Notebooks
+        </button>
         <button className={tab === "alerts" ? "tab active" : "tab"} onClick={() => setTab("alerts")}>
           Alerts
         </button>
@@ -394,6 +477,7 @@ export function ProjectDetailPage() {
 
       {tab === "sources" && <SourcesTab projectId={projectId} />}
       {tab === "pipelines" && <PipelinesTab projectId={projectId} />}
+      {tab === "notebooks" && <NotebooksTab projectId={projectId} />}
       {tab === "alerts" && <AlertsTab projectId={projectId} />}
     </div>
   );

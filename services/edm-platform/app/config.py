@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9092"
     cors_origins: str = "http://localhost:5173"
     secret_encryption_key: str = "change-me-dev-only-32-bytes-min!!"
+    enable_scheduler: bool = True
 
     @property
     def data_path(self) -> Path:

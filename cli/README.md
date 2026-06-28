@@ -42,6 +42,14 @@ edm pipeline create --project-id <id> --name standardize-customers --source-id <
   --output-dataset-name customers --output-layer silver \
   --transformations '[{"type": "standardize"}, {"type": "dedupe"}]'
 edm pipeline run --pipeline-id <id>
+edm pipeline schedule --pipeline-id <id> --cron "0 * * * *"   # hourly; --clear to remove
+
+# Notebook: write code in cells, run against a sample, then promote into the pipeline above's
+# kind of object — a real, schedulable Pipeline (see ADR-0010)
+edm notebook create --project-id <id> --name explore --source-id <id> --sample-size 100
+edm notebook add-cell --notebook-id <id> --code "df = df.drop_duplicates()"
+edm notebook run --notebook-id <id>
+edm notebook promote --notebook-id <id> --output-dataset-name customers_clean
 
 edm catalog search --project-id <id>
 edm catalog get --dataset-id <id>
@@ -59,8 +67,9 @@ edm query --dataset-id <id> --sql "SELECT * FROM dataset LIMIT 10"
 ```
 
 Run `edm --help` or `edm <group> --help` for the full command list (`auth`, `workspace`,
-`project`, `source`, `pipeline`, `job`, `catalog`, `quality`, `lineage`, `alert`, `query`). All
-output is JSON; errors print a one-line message and exit non-zero, so the CLI is scriptable.
+`project`, `source`, `pipeline`, `notebook`, `job`, `catalog`, `quality`, `lineage`, `alert`,
+`query`). All output is JSON; errors print a one-line message and exit non-zero, so the CLI is
+scriptable.
 
 ## Why a CLI before a UI
 
