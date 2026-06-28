@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.events import publish
+from app.modules.auth.service import assign_workspace_role, list_user_workspace_ids
 from app.modules.core.exceptions import ConflictError, NotFoundError
 from app.modules.workspace.models import Project, Workspace
 
@@ -15,12 +16,18 @@ def create_workspace(db: Session, owner_id: str, name: str, description: str) ->
     db.add(workspace)
     db.commit()
     db.refresh(workspace)
+    assign_workspace_role(db, owner_id, workspace.id, "owner")
     publish("workspace.created", {"id": workspace.id, "name": workspace.name})
     return workspace
 
 
-def list_workspaces(db: Session) -> list[Workspace]:
-    return list(db.execute(select(Workspace)).scalars())
+def list_workspaces(db: Session, user_id: str) -> list[Workspace]:
+    workspace_ids = list_user_workspace_ids(db, user_id)
+    if not workspace_ids:
+        return []
+    return list(
+        db.execute(select(Workspace).where(Workspace.id.in_(workspace_ids))).scalars()
+    )
 
 
 def get_workspace(db: Session, workspace_id: str) -> Workspace:
@@ -55,3 +62,7 @@ def get_project(db: Session, project_id: str) -> Project:
     if project is None:
         raise NotFoundError(f"project '{project_id}' not found")
     return project
+
+
+def get_workspace_id_for_project(db: Session, project_id: str) -> str:
+    return get_project(db, project_id).workspace_id

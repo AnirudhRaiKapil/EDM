@@ -6,6 +6,7 @@ from app.deps import get_current_user
 from app.modules.auth.models import User
 from app.modules.pipeline import service
 from app.modules.pipeline.schemas import PipelineCreate, PipelineRead
+from app.permissions import require_pipeline_access, require_project_access
 
 router = APIRouter(tags=["pipeline"])
 
@@ -17,6 +18,7 @@ def create_pipeline(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_project_access(db, current_user.id, project_id)
     return service.create_pipeline(
         db,
         current_user.id,
@@ -35,6 +37,7 @@ def list_pipelines(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_project_access(db, current_user.id, project_id)
     return service.list_pipelines(db, project_id)
 
 
@@ -44,4 +47,5 @@ def get_pipeline(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_pipeline_access(db, current_user.id, pipeline_id)
     return service.get_pipeline(db, pipeline_id)

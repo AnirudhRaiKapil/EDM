@@ -7,6 +7,7 @@ from app.modules.auth.models import User
 from app.modules.source import service as source_service
 from app.modules.source.schemas import SourceRead
 from app.modules.storage.adapter import storage
+from app.permissions import require_source_access
 
 router = APIRouter(tags=["ingestion"])
 
@@ -18,6 +19,7 @@ async def upload_source_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_source_access(db, current_user.id, source_id)
     source = source_service.get_source(db, source_id)
     content = await file.read()
     relative_path = storage.save_raw_upload(source_id, file.filename, content)

@@ -21,13 +21,24 @@ API docs: http://localhost:8000/docs · Health check: http://localhost:8000/heal
 ## The golden path (matches the MVP definition in docs/16-build-roadmap.md)
 
 1. `POST /api/v1/auth/register`, `POST /api/v1/auth/login` -> bearer token
-2. `POST /api/v1/workspaces`, `POST /api/v1/workspaces/{id}/projects`
-3. `POST /api/v1/projects/{id}/sources` (`connector_type: csv`)
+2. `POST /api/v1/workspaces` (creator is auto-assigned the `owner` role) -> `POST /api/v1/workspaces/{id}/projects`
+3. `POST /api/v1/projects/{id}/sources` (`connector_type: csv` or `json`)
 4. `POST /api/v1/sources/{id}/upload` (multipart file upload)
-5. `POST /api/v1/projects/{id}/pipelines` with `transformations: [{"type": "standardize"}, {"type": "dedupe"}]`
+5. `POST /api/v1/projects/{id}/pipelines` with a `transformations` list (see Transformation types below)
 6. `POST /api/v1/pipelines/{id}/jobs` -> triggers execution, returns a `Job` with `status`
 7. `GET /api/v1/catalog/datasets` / `GET /api/v1/catalog/datasets/{id}` -> the resulting Dataset + Schema
 8. `POST /api/v1/query` with `{"dataset_id": "...", "sql": "SELECT * FROM dataset LIMIT 10"}`
+
+Every workspace-scoped endpoint requires the caller to hold a `RoleAssignment` on that
+workspace (`owner` or `member`) — see `app/permissions.py`. Owners can manage membership via
+`POST /api/v1/workspaces/{id}/members` (`{"email": "...", "role": "owner"|"member"}`) and
+`GET /api/v1/workspaces/{id}/members`.
+
+### Connector types (`app/modules/ingestion/connectors.py`)
+`csv`, `json`
+
+### Transformation types (`app/modules/pipeline/transformations.py`)
+`standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`
 
 ## Tests
 
@@ -35,8 +46,11 @@ API docs: http://localhost:8000/docs · Health check: http://localhost:8000/heal
 .venv\Scripts\python.exe -m pytest
 ```
 
-`tests/test_golden_path.py` exercises steps 1-8 end to end against a temporary SQLite DB and
-local data directory.
+`tests/conftest.py` gives every test a fresh SQLite DB and local data directory (via FastAPI
+dependency overrides, not env vars — `Settings`/the SQLAlchemy engine are created once at
+import time, so per-test env vars alone don't isolate tests within one pytest process).
+`test_golden_path.py` covers CSV and JSON ingestion end to end; `test_rbac.py` covers
+membership/ownership enforcement; `test_transformations.py` unit-tests each transformation.
 
 ## Swapping in real infrastructure later
 

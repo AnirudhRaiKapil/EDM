@@ -34,3 +34,14 @@ class ProjectRead(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MemberAssign(BaseModel):
+    email: str
+    role: str = "member"
+
+
+class MemberRead(BaseModel):
+    user_id: str
+    email: str
+    role_name: str

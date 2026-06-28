@@ -14,5 +14,9 @@ class UnauthorizedError(EdmError):
     status_code = 401
 
 
+class ForbiddenError(EdmError):
+    status_code = 403
+
+
 class ValidationFailedError(EdmError):
     status_code = 422

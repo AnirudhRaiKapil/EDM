@@ -6,6 +6,7 @@ from app.deps import get_current_user
 from app.modules.auth.models import User
 from app.modules.job import service
 from app.modules.job.schemas import JobRead
+from app.permissions import require_job_access, require_pipeline_access
 
 router = APIRouter(tags=["job"])
 
@@ -16,6 +17,7 @@ def trigger_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_pipeline_access(db, current_user.id, pipeline_id)
     return service.run_pipeline(db, current_user.id, pipeline_id, trigger="manual")
 
 
@@ -25,6 +27,7 @@ def list_jobs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_pipeline_access(db, current_user.id, pipeline_id)
     return service.list_jobs(db, pipeline_id)
 
 
@@ -34,4 +37,5 @@ def get_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    require_job_access(db, current_user.id, job_id)
     return service.get_job(db, job_id)

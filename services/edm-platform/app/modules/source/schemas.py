@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-SUPPORTED_CONNECTOR_TYPES = ["csv"]
+SUPPORTED_CONNECTOR_TYPES = ["csv", "json"]
 
 
 class SourceCreate(BaseModel):
