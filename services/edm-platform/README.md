@@ -58,12 +58,17 @@ workspace (`owner` or `member`) — see `app/permissions.py`. Owners can manage 
 - `servicenow` — `connection_config: {"instance_url", "table", "query"?}`, `credentials: {"username", "password"}`. Table API, offset pagination.
 - `jira` — `connection_config: {"base_url", "jql"?}`, `credentials: {"email", "api_token"}`.
 - `confluence` — `connection_config: {"base_url", "cql"?|"space_key"?}`, `credentials: {"email", "api_token"}`.
+- `postgres`, `mysql` — `connection_config: {"host", "port", "database", "table"|"query"}`, `credentials: {"username", "password"}`. Same SELECT-only/identifier-validated pattern as `oracle` (ADR-0012).
+- `mongodb` — `connection_config: {"host", "port", "database", "collection", "filter"?, "limit"?}`. `credentials` optional, like `s3` (ADR-0012).
+- `google_sheets` — `connection_config: {"spreadsheet_id", "range", "auth_type"?: "api_key"|"bearer", "header_row"?}`, `credentials: {"api_key"}` or `{"token"}` depending on `auth_type` (ADR-0012).
 
 Credentials are encrypted at rest (`app/secrets.py`, Fernet) since real Vault remains out of
-reach (ADR-0003/0004) — see [ADR-0009](../../docs/adr/0009-encrypted-secrets-and-enterprise-connectors.md)
-for the full reasoning and which connectors are field-verified vs. logic-verified-only (no real
-ServiceNow/Jira/Confluence/Oracle account or Docker-based emulator available in this environment
-— only S3, via `moto`, gets genuine API-level verification).
+reach (ADR-0003/0004) — see [ADR-0009](../../docs/adr/0009-encrypted-secrets-and-enterprise-connectors.md)/
+[ADR-0012](../../docs/adr/0012-additional-connectors-and-notification-audit-ui.md) for the full
+reasoning and which connectors are field-verified vs. logic-verified-only: S3 (via `moto`) and
+MongoDB (via `mongomock`) get genuine API-level verification; the rest are request-building-level
+only (no real ServiceNow/Jira/Confluence/Oracle/Postgres/MySQL/Google account or Docker-based
+emulator available in this environment).
 
 ### Transformation types (`app/modules/pipeline/transformations.py`)
 `standardize`, `dedupe`, `select_columns`, `rename_columns`, `fill_nulls`, `filter_rows`,
@@ -117,10 +122,11 @@ alerts via `GET /projects/{id}/alerts` (optional `?status=open|acknowledged|reso
 via `PATCH /alerts/{id}` with `{"status": "acknowledged"|"resolved"|"open"}`.
 
 Every Alert fans out to that project's enabled notification channels:
-`POST /api/v1/projects/{id}/notification-channels` `{"type": "webhook"|"email", "config": {...}}`
-(`{"url": "..."}` for webhook, `{"to_address": "..."}` for email — SMTP server settings are
-operator-level `.env` config, not per-channel). A channel failing to deliver is logged and
-skipped, never raised — it can't fail the request that triggered the alert.
+`POST /api/v1/projects/{id}/notification-channels` `{"type": "webhook"|"email"|"slack"|"teams", "config": {...}}`
+(`{"url": "..."}` for webhook/slack/teams, `{"to_address": "..."}` for email — SMTP server settings
+are operator-level `.env` config, not per-channel). `slack`/`teams` reuse the webhook-shaped config
+since both are themselves just incoming-webhook URLs (ADR-0012). A channel failing to deliver is
+logged and skipped, never raised — it can't fail the request that triggered the alert.
 
 ### Audit log (`app/modules/audit/`) — ADR-0011
 An immutable, append-only record of security-sensitive actions: registration, login
@@ -176,8 +182,10 @@ rather than replace edges; `test_alerting.py` covers critical alerts on failure,
 on quality warnings, the acknowledge/resolve lifecycle, and that non-members can't see them;
 `test_secrets.py` covers the encryption round-trip and that credentials never leak via the API;
 `test_rest_client.py` covers the generic REST pagination/auth engine; `test_enterprise_connectors.py`,
-`test_oracle_connector.py`, and `test_s3_connector.py` cover the new connectors (S3 against a
-real in-memory `moto` S3 emulation; the rest against a mocked transport/connection only);
+`test_oracle_connector.py`, `test_s3_connector.py`, `test_postgres_connector.py`,
+`test_mysql_connector.py`, `test_mongodb_connector.py`, and `test_google_sheets_connector.py`
+cover the connectors (S3 against a real in-memory `moto` S3 emulation, MongoDB against a real
+`mongomock` instance — ADR-0012; the rest against a mocked transport/connection only);
 `test_sandbox.py` covers the restricted code executor in isolation (blocked imports/builtins,
 timeout, multi-cell state sharing); `test_notebook.py` covers the full notebook lifecycle
 including promote -> run -> query end to end; `test_scheduler.py` covers cron validation and

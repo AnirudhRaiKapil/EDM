@@ -4,7 +4,14 @@ import { Link, useParams } from "react-router-dom";
 import * as api from "../api/endpoints";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { StatusBadge } from "../components/StatusBadge";
-import { FILE_BASED_CONNECTOR_TYPES, type ConnectorType, type TransformationType } from "../api/types";
+import {
+  FILE_BASED_CONNECTOR_TYPES,
+  type ConnectorType,
+  type NotificationChannelType,
+  type TransformationType,
+} from "../api/types";
+
+const NOTIFICATION_CHANNEL_TYPES: NotificationChannelType[] = ["webhook", "email", "slack", "teams"];
 
 const TRANSFORMATION_TYPES: TransformationType[] = [
   "standardize",
@@ -20,30 +27,42 @@ const CONNECTOR_TYPES: ConnectorType[] = [
   "json",
   "sqlite",
   "oracle",
+  "postgres",
+  "mysql",
+  "mongodb",
   "s3",
   "rest_api",
   "servicenow",
   "jira",
   "confluence",
+  "google_sheets",
 ];
 
 const CONFIG_PLACEHOLDER: Record<string, string> = {
   sqlite: '{"db_path": "C:/data/app.db", "table": "customers"}',
   oracle: '{"host": "db.internal", "port": 1521, "service_name": "ORCL", "table": "customers"}',
+  postgres: '{"host": "db.internal", "port": 5432, "database": "app", "table": "customers"}',
+  mysql: '{"host": "db.internal", "port": 3306, "database": "app", "table": "customers"}',
+  mongodb: '{"host": "db.internal", "port": 27017, "database": "app", "collection": "customers"}',
   s3: '{"bucket": "my-bucket", "key": "data/file.csv", "region": "us-east-1"}',
   rest_api: '{"base_url": "https://api.example.com", "path": "v1/things", "auth_type": "bearer"}',
   servicenow: '{"instance_url": "https://x.service-now.com", "table": "incident"}',
   jira: '{"base_url": "https://x.atlassian.net", "jql": "project = OPS"}',
   confluence: '{"base_url": "https://x.atlassian.net", "space_key": "ENG"}',
+  google_sheets: '{"spreadsheet_id": "...", "range": "Sheet1!A1:B10"}',
 };
 
 const CREDENTIALS_PLACEHOLDER: Record<string, string> = {
   oracle: '{"username": "...", "password": "..."}',
+  postgres: '{"username": "...", "password": "..."}',
+  mysql: '{"username": "...", "password": "..."}',
+  mongodb: '{"username": "...", "password": "..."} (optional -- omit for unauthenticated deployments)',
   s3: '{"access_key_id": "...", "secret_access_key": "..."} (optional -- omit to use the default AWS credential chain)',
   rest_api: '{"token": "..."} or {"username": "...", "password": "..."} or {"api_key": "..."}, matching auth_type',
   servicenow: '{"username": "...", "password": "..."}',
   jira: '{"email": "...", "api_token": "..."}',
   confluence: '{"email": "...", "api_token": "..."}',
+  google_sheets: '{"api_key": "..."} or {"token": "..."}, matching auth_type',
 };
 
 function SourcesTab({ projectId }: { projectId: string }) {
@@ -445,9 +464,115 @@ function AlertsTab({ projectId }: { projectId: string }) {
   );
 }
 
+function NotificationChannelsTab({ projectId }: { projectId: string }) {
+  const queryClient = useQueryClient();
+  const { data: channels } = useQuery({
+    queryKey: ["notification-channels", projectId],
+    queryFn: () => api.listNotificationChannels(projectId),
+  });
+
+  const [channelType, setChannelType] = useState<NotificationChannelType>("webhook");
+  const [url, setUrl] = useState("");
+  const [toAddress, setToAddress] = useState("");
+  const createChannel = useMutation({
+    mutationFn: () =>
+      api.createNotificationChannel(
+        projectId,
+        channelType,
+        channelType === "email" ? { to_address: toAddress } : { url },
+      ),
+    onSuccess: () => {
+      setUrl("");
+      setToAddress("");
+      queryClient.invalidateQueries({ queryKey: ["notification-channels", projectId] });
+    },
+  });
+
+  const deleteChannel = useMutation({
+    mutationFn: (channelId: string) => api.deleteNotificationChannel(channelId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["notification-channels", projectId] }),
+  });
+
+  return (
+    <div>
+      <p className="muted">
+        Fire a webhook, email, Slack, or Teams message whenever an Alert is created on this project.
+      </p>
+      <form
+        className="inline-form"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          createChannel.mutate();
+        }}
+      >
+        <select
+          value={channelType}
+          onChange={(e) => setChannelType(e.target.value as NotificationChannelType)}
+        >
+          {NOTIFICATION_CHANNEL_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        {channelType === "email" ? (
+          <input
+            type="email"
+            placeholder="oncall@example.com"
+            value={toAddress}
+            onChange={(e) => setToAddress(e.target.value)}
+            required
+          />
+        ) : (
+          <input
+            placeholder={
+              channelType === "slack"
+                ? "https://hooks.slack.com/services/..."
+                : channelType === "teams"
+                  ? "https://outlook.office.com/webhook/..."
+                  : "https://example.com/webhook"
+            }
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            required
+          />
+        )}
+        <button type="submit" disabled={createChannel.isPending}>
+          Add channel
+        </button>
+      </form>
+      <ErrorBanner error={createChannel.error} />
+
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Destination</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {channels?.map((channel) => (
+            <tr key={channel.id}>
+              <td>{channel.type}</td>
+              <td>{(channel.config.url ?? channel.config.to_address ?? "—") as string}</td>
+              <td>
+                <button onClick={() => deleteChannel.mutate(channel.id)}>Delete</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {channels?.length === 0 && <p className="muted">No notification channels yet.</p>}
+    </div>
+  );
+}
+
 export function ProjectDetailPage() {
   const { workspaceId, projectId } = useParams<{ workspaceId: string; projectId: string }>();
-  const [tab, setTab] = useState<"sources" | "pipelines" | "notebooks" | "alerts">("sources");
+  const [tab, setTab] = useState<"sources" | "pipelines" | "notebooks" | "alerts" | "notifications">(
+    "sources",
+  );
   if (!workspaceId || !projectId) return null;
 
   return (
@@ -470,6 +595,12 @@ export function ProjectDetailPage() {
         <button className={tab === "alerts" ? "tab active" : "tab"} onClick={() => setTab("alerts")}>
           Alerts
         </button>
+        <button
+          className={tab === "notifications" ? "tab active" : "tab"}
+          onClick={() => setTab("notifications")}
+        >
+          Notifications
+        </button>
         <Link to={`/catalog?project_id=${projectId}`} className="tab">
           Catalog
         </Link>
@@ -479,6 +610,7 @@ export function ProjectDetailPage() {
       {tab === "pipelines" && <PipelinesTab projectId={projectId} />}
       {tab === "notebooks" && <NotebooksTab projectId={projectId} />}
       {tab === "alerts" && <AlertsTab projectId={projectId} />}
+      {tab === "notifications" && <NotificationChannelsTab projectId={projectId} />}
     </div>
   );
 }

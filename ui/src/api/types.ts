@@ -40,7 +40,11 @@ export type ConnectorType =
   | "rest_api"
   | "servicenow"
   | "jira"
-  | "confluence";
+  | "confluence"
+  | "postgres"
+  | "mysql"
+  | "mongodb"
+  | "google_sheets";
 
 export const FILE_BASED_CONNECTOR_TYPES: ConnectorType[] = ["csv", "json"];
 
@@ -232,4 +236,28 @@ export interface QueryResult {
   columns: string[];
   rows: Record<string, unknown>[];
   row_count: number;
+}
+
+export interface AuditEvent {
+  id: string;
+  actor_user_id: string | null;
+  subject_email: string | null;
+  workspace_id: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  event_metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export type NotificationChannelType = "webhook" | "email" | "slack" | "teams";
+
+export interface NotificationChannel {
+  id: string;
+  project_id: string;
+  type: NotificationChannelType;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  owner_id: string;
+  created_at: string;
 }

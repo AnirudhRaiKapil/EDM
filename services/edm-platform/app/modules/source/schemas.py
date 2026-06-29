@@ -12,9 +12,23 @@ SUPPORTED_CONNECTOR_TYPES = [
     "servicenow",
     "jira",
     "confluence",
+    "postgres",
+    "mysql",
+    "mongodb",
+    "google_sheets",
 ]
 FILE_BASED_CONNECTOR_TYPES = ["csv", "json"]
-CREDENTIALED_CONNECTOR_TYPES = ["oracle", "s3", "rest_api", "servicenow", "jira", "confluence"]
+CREDENTIALED_CONNECTOR_TYPES = [
+    "oracle",
+    "s3",
+    "rest_api",
+    "servicenow",
+    "jira",
+    "confluence",
+    "postgres",
+    "mysql",
+    "google_sheets",
+]
 
 
 class SourceCreate(BaseModel):

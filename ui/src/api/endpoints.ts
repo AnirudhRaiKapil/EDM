@@ -1,6 +1,7 @@
 import { apiClient } from "./client";
 import type {
   Alert,
+  AuditEvent,
   CellRunResult,
   Dataset,
   DatasetDetail,
@@ -9,6 +10,8 @@ import type {
   Member,
   Notebook,
   NotebookCell,
+  NotificationChannel,
+  NotificationChannelType,
   Pipeline,
   Project,
   QualityRule,
@@ -293,4 +296,37 @@ export async function promoteNotebook(
     pipeline_name: pipelineName,
   });
   return data;
+}
+
+export async function listWorkspaceAuditEvents(workspaceId: string) {
+  const { data } = await apiClient.get<AuditEvent[]>(`/workspaces/${workspaceId}/audit-events`);
+  return data;
+}
+
+export async function listMyAuditEvents() {
+  const { data } = await apiClient.get<AuditEvent[]>("/users/me/audit-events");
+  return data;
+}
+
+export async function listNotificationChannels(projectId: string) {
+  const { data } = await apiClient.get<NotificationChannel[]>(
+    `/projects/${projectId}/notification-channels`,
+  );
+  return data;
+}
+
+export async function createNotificationChannel(
+  projectId: string,
+  type: NotificationChannelType,
+  config: Record<string, unknown>,
+) {
+  const { data } = await apiClient.post<NotificationChannel>(
+    `/projects/${projectId}/notification-channels`,
+    { type, config },
+  );
+  return data;
+}
+
+export async function deleteNotificationChannel(channelId: string) {
+  await apiClient.delete(`/notification-channels/${channelId}`);
 }

@@ -3,11 +3,13 @@ import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as api from "../api/endpoints";
 import { ErrorBanner } from "../components/ErrorBanner";
+import { useAuth } from "../context/AuthContext";
 
 export function WorkspaceDetailPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>();
   if (!workspaceId) return null;
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const { data: workspace } = useQuery({
     queryKey: ["workspace", workspaceId],
@@ -20,6 +22,12 @@ export function WorkspaceDetailPage() {
   const { data: members } = useQuery({
     queryKey: ["members", workspaceId],
     queryFn: () => api.listMembers(workspaceId),
+  });
+  const isOwner = members?.some((m) => m.email === user?.email && m.role_name === "owner") ?? false;
+  const { data: auditEvents } = useQuery({
+    queryKey: ["audit-events", workspaceId],
+    queryFn: () => api.listWorkspaceAuditEvents(workspaceId),
+    enabled: isOwner,
   });
 
   const [projectName, setProjectName] = useState("");
@@ -133,6 +141,34 @@ export function WorkspaceDetailPage() {
           </tbody>
         </table>
       </section>
+
+      {isOwner && (
+        <section>
+          <h2>Audit Log</h2>
+          <p className="muted">Owner-only: who did what, and when, in this workspace.</p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Action</th>
+                <th>Entity</th>
+                <th>Subject</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditEvents?.map((event) => (
+                <tr key={event.id}>
+                  <td>{new Date(event.created_at).toLocaleString()}</td>
+                  <td>{event.action}</td>
+                  <td>{event.entity_type ? `${event.entity_type}:${event.entity_id ?? ""}` : "—"}</td>
+                  <td>{event.subject_email ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {auditEvents?.length === 0 && <p className="muted">No audit events yet.</p>}
+        </section>
+      )}
     </div>
   );
 }

@@ -33,7 +33,7 @@ edm project create --workspace-id <id> --name sales --environment dev
 edm source create --project-id <id> --name customers-csv --connector-type csv
 edm source upload --source-id <id> --file ./customers.csv
 
-# any of oracle/s3/rest_api/servicenow/jira/confluence, e.g.:
+# any of oracle/s3/rest_api/servicenow/jira/confluence/postgres/mysql/mongodb/google_sheets, e.g.:
 edm source create --project-id <id> --name snow-incidents --connector-type servicenow \
   --connection-config '{"instance_url": "https://x.service-now.com", "table": "incident"}' \
   --credentials '{"username": "admin", "password": "..."}'
@@ -63,8 +63,9 @@ edm alert list --project-id <id>
 edm alert acknowledge --alert-id <id>
 edm alert resolve --alert-id <id>
 
-# Notification channels: every Alert on the project fans out to these (ADR-0011)
+# Notification channels: every Alert on the project fans out to these (ADR-0011, +slack/teams ADR-0012)
 edm notification create --project-id <id> --type webhook --url https://hooks.example.com/edm
+edm notification create --project-id <id> --type slack --url https://hooks.slack.com/services/...
 edm notification create --project-id <id> --type email --to-address oncall@example.com
 edm notification list --project-id <id>
 

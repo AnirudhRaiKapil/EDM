@@ -117,8 +117,19 @@ webhook receiver and a real local SMTP server, not just mocks. A dataset-classif
 column-masking heuristic was added to the query endpoint for non-owner roles. `ui/e2e/smoke.mjs`
 is now wired into CI (`.github/workflows/test.yml`) instead of being a manual-only check.
 
+A follow-up pass ([ADR-0012](adr/0012-additional-connectors-and-notification-audit-ui.md)) added
+four more ingestion connectors — Postgres, MySQL (both mirroring Oracle's SELECT-only/identifier-
+validated pattern), MongoDB (verified against a real `mongomock` instance, the same tier `moto`
+gives S3; credentials optional, matching S3's default-chain precedent), and Google Sheets
+(`api_key`/`bearer` auth against the real Sheets API shape) — bringing the connector count to 13.
+It also built the two notification channel types ADR-0008 had left unbuilt, `slack` and `teams`
+(both webhook-shaped, reusing the existing `NotificationChannel` config model), and closed the one
+gap ADR-0011 explicitly deferred: `edm-audit` and `edm-notification` now have dedicated `edm-ui`
+pages (an owner-only Audit Log section on the workspace page, a Notifications tab on the project
+page) instead of being CLI-only. Both were verified through this project's standing real-browser
+bar by extending `ui/e2e/smoke.mjs` rather than writing a separate check.
+
 `edm-governance` (beyond dataset classification and the PII-masking heuristic above — no real
-per-column tagging/policy engine), `slack`/`teams` notification channels, `edm-monitoring`,
-`edm-ai`, the SDK, and dedicated UI pages for `edm-audit`/`edm-notification` (CLI-only today)
-remain unbuilt. See [17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept
-current per [Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).
+per-column tagging/policy engine), `edm-monitoring`, `edm-ai`, and the SDK remain unbuilt. See
+[17-codebase-map.md](17-codebase-map.md) for the file-level picture, kept current per
+[Rule 11](03-engineering-principles.md#rule-11--docs-stay-in-sync-with-code).

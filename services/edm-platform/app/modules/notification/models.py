@@ -4,7 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 from app.modules.core.models import OwnedMixin, TimestampMixin, UUIDPrimaryKeyMixin
 
-SUPPORTED_CHANNEL_TYPES = ["webhook", "email"]
+SUPPORTED_CHANNEL_TYPES = ["webhook", "email", "slack", "teams"]
 
 
 class NotificationChannel(Base, UUIDPrimaryKeyMixin, TimestampMixin, OwnedMixin):

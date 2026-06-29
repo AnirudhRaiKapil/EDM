@@ -13,6 +13,8 @@ logger = logging.getLogger("edm.notification")
 _SENDERS = {
     "webhook": senders.send_webhook,
     "email": senders.send_email,
+    "slack": senders.send_slack,
+    "teams": senders.send_teams,
 }
 
 
@@ -23,8 +25,8 @@ def create_channel(
         raise ValidationFailedError(
             f"unsupported channel type '{channel_type}'; choose from {SUPPORTED_CHANNEL_TYPES}"
         )
-    if channel_type == "webhook" and not config.get("url"):
-        raise ValidationFailedError("webhook channel requires a 'url' in config")
+    if channel_type in ("webhook", "slack", "teams") and not config.get("url"):
+        raise ValidationFailedError(f"{channel_type} channel requires a 'url' in config")
     if channel_type == "email" and not config.get("to_address"):
         raise ValidationFailedError("email channel requires a 'to_address' in config")
 

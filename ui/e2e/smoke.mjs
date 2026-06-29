@@ -15,7 +15,7 @@ async function shot(page, name) {
   console.log("screenshot:", file);
 }
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
 const page = await browser.newPage();
 page.on("console", (msg) => {
   if (msg.type() === "error") consoleErrors.push(msg.text());
@@ -51,6 +51,7 @@ try {
 
   await page.click(`text=${wsName}`);
   await page.waitForURL(/\/workspaces\/[^/]+$/);
+  const workspaceUrl = page.url();
   await shot(page, "workspace-detail");
 
   await page.fill('input[placeholder="Project name"]', "ops");
@@ -244,6 +245,40 @@ try {
   await page.locator(".tabs ~ div select").selectOption("open");
   await page.waitForSelector("text=No open alerts.");
   await shot(page, "alert-resolved");
+
+  // Notification channels: webhook/email/slack/teams, all created through the
+  // same generic form on the project's Notifications tab.
+  await page.click('button:has-text("Notifications")');
+  await page.waitForSelector('button:has-text("Add channel")');
+
+  await page.fill('input[placeholder="https://example.com/webhook"]', "https://hooks.example.com/edm");
+  await page.click('button:has-text("Add channel")');
+  await page.waitForSelector("text=https://hooks.example.com/edm");
+  await shot(page, "webhook-channel-created");
+
+  await page.selectOption(".tabs ~ div form select", "slack");
+  await page.fill('input[placeholder="https://hooks.slack.com/services/..."]', "https://hooks.slack.com/services/T0/B0/x");
+  await page.click('button:has-text("Add channel")');
+  await page.waitForSelector("text=https://hooks.slack.com/services/T0/B0/x");
+  await shot(page, "slack-channel-created");
+
+  await page.selectOption(".tabs ~ div form select", "email");
+  await page.fill('input[type="email"]', "oncall@example.com");
+  await page.click('button:has-text("Add channel")');
+  await page.waitForSelector("text=oncall@example.com");
+  await shot(page, "email-channel-created");
+
+  await page.click('tr:has-text("slack") >> button:has-text("Delete")');
+  await page.waitForSelector("text=https://hooks.slack.com/services/T0/B0/x", { state: "detached" });
+  await shot(page, "slack-channel-deleted");
+
+  // Audit log: owner-only section on the workspace page. The oracle source created
+  // earlier with credentials should already have produced a source.credentials_set
+  // event scoped to this workspace.
+  await page.goto(workspaceUrl);
+  await page.waitForSelector("text=Audit Log");
+  await page.waitForSelector("text=source.credentials_set");
+  await shot(page, "audit-log");
 
   console.log("RESULT: PASS");
 } catch (err) {

@@ -150,7 +150,21 @@ def source():
     "--connector-type",
     default="csv",
     type=click.Choice(
-        ["csv", "json", "sqlite", "oracle", "s3", "rest_api", "servicenow", "jira", "confluence"]
+        [
+            "csv",
+            "json",
+            "sqlite",
+            "oracle",
+            "s3",
+            "rest_api",
+            "servicenow",
+            "jira",
+            "confluence",
+            "postgres",
+            "mysql",
+            "mongodb",
+            "google_sheets",
+        ]
     ),
 )
 @click.option(
@@ -158,15 +172,19 @@ def source():
     default=None,
     help='JSON string, e.g. for sqlite: \'{"db_path": "C:/data/app.db", "table": "customers"}\'; '
     'for oracle: \'{"host": "...", "port": 1521, "service_name": "...", "table": "..."}\'; '
+    'for postgres/mysql: \'{"host": "...", "port": 5432, "database": "...", "table": "..."}\'; '
+    'for mongodb: \'{"host": "...", "port": 27017, "database": "...", "collection": "..."}\'; '
     'for s3: \'{"bucket": "...", "key": "data/file.csv"}\'; '
     'for servicenow: \'{"instance_url": "https://x.service-now.com", "table": "incident"}\'; '
-    'for jira/confluence: \'{"base_url": "https://x.atlassian.net", "jql": "..."}\'',
+    'for jira/confluence: \'{"base_url": "https://x.atlassian.net", "jql": "..."}\'; '
+    'for google_sheets: \'{"spreadsheet_id": "...", "range": "Sheet1!A1:B10"}\'',
 )
 @click.option(
     "--credentials",
     default=None,
-    help='JSON string, e.g. \'{"username": "...", "password": "..."}\' or '
-    '\'{"email": "...", "api_token": "..."}\' -- encrypted at rest, never returned by the API.',
+    help='JSON string, e.g. \'{"username": "...", "password": "..."}\', '
+    '\'{"email": "...", "api_token": "..."}\', or \'{"api_key": "..."}\' (google_sheets) -- '
+    "optional for mongodb/s3, encrypted at rest, never returned by the API.",
 )
 @handle_errors
 def source_create(project_id, name, connector_type, connection_config, credentials):
@@ -553,17 +571,19 @@ def audit_me(limit):
 
 @cli.group()
 def notification():
-    """Webhook/email channels that fire when an Alert is created."""
+    """Webhook/email/Slack/Teams channels that fire when an Alert is created."""
 
 
 @notification.command("create")
 @click.option("--project-id", required=True)
-@click.option("--type", "channel_type", required=True, type=click.Choice(["webhook", "email"]))
-@click.option("--url", default=None, help="Required for --type webhook.")
+@click.option(
+    "--type", "channel_type", required=True, type=click.Choice(["webhook", "email", "slack", "teams"])
+)
+@click.option("--url", default=None, help="Required for --type webhook/slack/teams.")
 @click.option("--to-address", default=None, help="Required for --type email.")
 @handle_errors
 def notification_create(project_id, channel_type, url, to_address):
-    config = {"url": url} if channel_type == "webhook" else {"to_address": to_address}
+    config = {"url": url} if channel_type in ("webhook", "slack", "teams") else {"to_address": to_address}
     echo_json(
         ApiClient().post(
             f"/projects/{project_id}/notification-channels",

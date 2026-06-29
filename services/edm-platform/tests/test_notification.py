@@ -64,6 +64,52 @@ def test_send_webhook_requires_a_url():
         senders.send_webhook(channel, _alert())
 
 
+def test_send_slack_posts_a_text_payload():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"ok")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    channel = _channel("slack", {"url": "https://hooks.slack.com/services/x"})
+    senders.send_slack(channel, _alert(message="pipeline failed"), client=client)
+
+    assert len(seen) == 1
+    body = httpx.Response(200, content=seen[0].read()).json()
+    assert body["text"] == "[CRITICAL] pipeline failed"
+
+
+def test_send_slack_requires_a_url():
+    channel = _channel("slack", {})
+    with pytest.raises(ValueError):
+        senders.send_slack(channel, _alert())
+
+
+def test_send_teams_posts_a_message_card():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b"1")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    channel = _channel("teams", {"url": "https://outlook.office.com/webhook/x"})
+    senders.send_teams(channel, _alert(severity="warning", message="quality check failed"), client=client)
+
+    assert len(seen) == 1
+    body = httpx.Response(200, content=seen[0].read()).json()
+    assert body["@type"] == "MessageCard"
+    assert body["themeColor"] == "FFA500"
+    assert body["text"] == "quality check failed"
+
+
+def test_send_teams_requires_a_url():
+    channel = _channel("teams", {})
+    with pytest.raises(ValueError):
+        senders.send_teams(channel, _alert())
+
+
 class _FakeSMTP:
     instances = []
 
@@ -182,6 +228,35 @@ def test_webhook_channel_missing_url_is_rejected(client):
     response = client.post(
         f"/api/v1/projects/{project_id}/notification-channels",
         json={"type": "webhook", "config": {}},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+def test_create_slack_and_teams_channels(client):
+    headers = auth_headers(client, email="slack-teams@example.com")
+    _, project_id = _setup_project(client, headers)
+
+    for channel_type, url in (
+        ("slack", "https://hooks.slack.com/services/x"),
+        ("teams", "https://outlook.office.com/webhook/x"),
+    ):
+        created = client.post(
+            f"/api/v1/projects/{project_id}/notification-channels",
+            json={"type": channel_type, "config": {"url": url}},
+            headers=headers,
+        )
+        assert created.status_code == 201
+        assert created.json()["type"] == channel_type
+
+
+def test_slack_channel_missing_url_is_rejected(client):
+    headers = auth_headers(client, email="slack-missing-url@example.com")
+    _, project_id = _setup_project(client, headers)
+
+    response = client.post(
+        f"/api/v1/projects/{project_id}/notification-channels",
+        json={"type": "slack", "config": {}},
         headers=headers,
     )
     assert response.status_code == 422

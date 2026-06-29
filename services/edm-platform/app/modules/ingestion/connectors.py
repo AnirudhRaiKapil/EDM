@@ -3,6 +3,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+import httpx
 import pandas as pd
 
 from app.modules.core.exceptions import ValidationFailedError
@@ -186,6 +187,128 @@ def _load_confluence(source: Source) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def _load_postgres(source: Source) -> pd.DataFrame:
+    import psycopg2  # imported lazily: not every install needs the Postgres client
+
+    config = source.connection_config or {}
+    credentials = _credentials_for(source) or {}
+    query = config.get("query")
+    table = config.get("table")
+
+    if query:
+        if not query.strip().lower().startswith("select"):
+            raise ValidationFailedError("postgres source query must be a SELECT statement")
+    elif table:
+        if not _IDENTIFIER_RE.match(table):
+            raise ValidationFailedError(f"invalid table name '{table}'")
+        query = f'SELECT * FROM "{table}"'
+    else:
+        raise ValidationFailedError(f"source '{source.id}' is missing connection_config.query/.table")
+
+    connection = psycopg2.connect(
+        host=config["host"],
+        port=config["port"],
+        dbname=config["database"],
+        user=credentials.get("username"),
+        password=credentials.get("password"),
+    )
+    try:
+        cursor = connection.cursor()
+        cursor.execute(query)
+        columns = [col[0] for col in cursor.description]
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows, columns=columns)
+    finally:
+        connection.close()
+
+
+def _load_mysql(source: Source) -> pd.DataFrame:
+    import pymysql  # imported lazily: not every install needs the MySQL client
+
+    config = source.connection_config or {}
+    credentials = _credentials_for(source) or {}
+    query = config.get("query")
+    table = config.get("table")
+
+    if query:
+        if not query.strip().lower().startswith("select"):
+            raise ValidationFailedError("mysql source query must be a SELECT statement")
+    elif table:
+        if not _IDENTIFIER_RE.match(table):
+            raise ValidationFailedError(f"invalid table name '{table}'")
+        query = f"SELECT * FROM `{table}`"
+    else:
+        raise ValidationFailedError(f"source '{source.id}' is missing connection_config.query/.table")
+
+    connection = pymysql.connect(
+        host=config["host"],
+        port=config["port"],
+        database=config["database"],
+        user=credentials.get("username"),
+        password=credentials.get("password"),
+    )
+    try:
+        cursor = connection.cursor()
+        cursor.execute(query)
+        columns = [col[0] for col in cursor.description]
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows, columns=columns)
+    finally:
+        connection.close()
+
+
+def _load_mongodb(source: Source) -> pd.DataFrame:
+    import pymongo  # imported lazily: not every install needs the MongoDB client
+
+    config = source.connection_config or {}
+    credentials = _credentials_for(source)
+
+    client_kwargs = {}
+    if credentials and credentials.get("username"):
+        client_kwargs["username"] = credentials["username"]
+        client_kwargs["password"] = credentials.get("password")
+    client = pymongo.MongoClient(host=config["host"], port=config["port"], **client_kwargs)
+    try:
+        collection = client[config["database"]][config["collection"]]
+        cursor = collection.find(config.get("filter") or {})
+        if config.get("limit"):
+            cursor = cursor.limit(config["limit"])
+        records = [{k: v for k, v in doc.items() if k != "_id"} for doc in cursor]
+        return pd.DataFrame(records)
+    finally:
+        client.close()
+
+
+def _load_google_sheets(source: Source) -> pd.DataFrame:
+    config = source.connection_config or {}
+    credentials = _credentials_for(source) or {}
+    spreadsheet_id = config["spreadsheet_id"]
+    cell_range = config["range"]
+    auth_type = config.get("auth_type", "api_key")
+
+    params = {}
+    headers = {}
+    if auth_type == "api_key":
+        params["key"] = credentials.get("api_key")
+    else:
+        headers["Authorization"] = f"Bearer {credentials.get('token')}"
+
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{cell_range}"
+    with httpx.Client(timeout=30.0) as client:
+        response = client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        values = response.json().get("values", [])
+
+    if not values:
+        return pd.DataFrame()
+    if config.get("header_row", True):
+        header, *data_rows = values
+        width = len(header)
+        padded_rows = [row + [None] * (width - len(row)) for row in data_rows]
+        return pd.DataFrame(padded_rows, columns=header)
+    return pd.DataFrame(values)
+
+
 _CONNECTOR_LOADERS = {
     "sqlite": _load_sqlite,
     "oracle": _load_oracle,
@@ -194,6 +317,10 @@ _CONNECTOR_LOADERS = {
     "servicenow": _load_servicenow,
     "jira": _load_jira,
     "confluence": _load_confluence,
+    "postgres": _load_postgres,
+    "mysql": _load_mysql,
+    "mongodb": _load_mongodb,
+    "google_sheets": _load_google_sheets,
 }
 
 

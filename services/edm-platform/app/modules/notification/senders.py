@@ -44,6 +44,46 @@ def send_webhook(channel: NotificationChannel, alert: Alert, client: httpx.Clien
             client.close()
 
 
+def send_slack(channel: NotificationChannel, alert: Alert, client: httpx.Client | None = None) -> None:
+    url = channel.config.get("url")
+    if not url:
+        raise ValueError("slack channel is missing a 'url' in its config")
+    payload = {"text": f"[{alert.severity.upper()}] {alert.message}"}
+    owns_client = client is None
+    client = client or httpx.Client(timeout=settings.webhook_timeout_seconds)
+    try:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+    finally:
+        if owns_client:
+            client.close()
+
+
+_TEAMS_THEME_COLORS = {"critical": "FF0000", "warning": "FFA500", "info": "0078D7"}
+
+
+def send_teams(channel: NotificationChannel, alert: Alert, client: httpx.Client | None = None) -> None:
+    url = channel.config.get("url")
+    if not url:
+        raise ValueError("teams channel is missing a 'url' in its config")
+    payload = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": f"EDM Platform {alert.severity} alert",
+        "themeColor": _TEAMS_THEME_COLORS.get(alert.severity, "0078D7"),
+        "title": f"[{alert.severity.upper()}] EDM Platform alert",
+        "text": alert.message,
+    }
+    owns_client = client is None
+    client = client or httpx.Client(timeout=settings.webhook_timeout_seconds)
+    try:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+    finally:
+        if owns_client:
+            client.close()
+
+
 def send_email(channel: NotificationChannel, alert: Alert, smtp_cls: type = smtplib.SMTP) -> None:
     to_address = channel.config.get("to_address")
     if not to_address:

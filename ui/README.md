@@ -27,19 +27,23 @@ Open `http://localhost:5173`. `VITE_API_URL` in `.env.local` points at the API; 
 - `src/api/endpoints.ts` — one typed function per API call, grouped by resource.
 - `src/context/AuthContext.tsx` — login/register/logout, token persisted to `localStorage`.
 - `src/pages/` — one file per route. `ProjectDetailPage.tsx` holds a Sources tab (generic
-  `connection_config`/`credentials` JSON fields cover all 7 non-file connector types — not
+  `connection_config`/`credentials` JSON fields cover all 11 non-file connector types — not
   bespoke fields per type, since that stopped scaling once Oracle/S3/REST/ServiceNow/Jira/
-  Confluence joined sqlite), a Pipelines tab (with an inline transformation-step builder), a
-  Notebooks tab (create + list, links into `NotebookDetailPage.tsx`), and an Alerts tab
-  (status-filterable, acknowledge/resolve); `PipelineDetailPage.tsx` also holds a Schedule
-  section (set/clear a cron expression); `NotebookDetailPage.tsx` holds per-cell editors with
-  run/delete controls and inline results, a "run all" button, and a promote-to-pipeline form
-  (ADR-0010); `DatasetDetailPage.tsx` holds schema, tags, classification, data quality (rules +
-  run history), lineage, and a SQL query runner. `edm-audit` and `edm-notification` (ADR-0011)
-  have no dedicated page yet — `edm-cli`'s `audit`/`notification` commands are the only interface
-  to them today. PII column masking (ADR-0011) needed no UI changes at all: it happens server-side
-  on the query response itself, so the existing query runner in `DatasetDetailPage.tsx` already
-  shows masked values to a non-owner with zero changes on this side.
+  Confluence joined sqlite, and held for Postgres/MySQL/MongoDB/Google Sheets too — ADR-0012), a
+  Pipelines tab (with an inline transformation-step builder), a Notebooks tab (create + list,
+  links into `NotebookDetailPage.tsx`), an Alerts tab (status-filterable, acknowledge/resolve),
+  and a Notifications tab (ADR-0012) — list channels (webhook/email/slack/teams) and a generic
+  create form whose destination input switches between an email field and a url field by type;
+  `PipelineDetailPage.tsx` also holds a Schedule section (set/clear a cron expression);
+  `NotebookDetailPage.tsx` holds per-cell editors with run/delete controls and inline results, a
+  "run all" button, and a promote-to-pipeline form (ADR-0010); `DatasetDetailPage.tsx` holds
+  schema, tags, classification, data quality (rules + run history), lineage, and a SQL query
+  runner; `WorkspaceDetailPage.tsx` also holds an owner-only Audit Log section (ADR-0012) — gated
+  client-side on the caller's own membership role matching the server's real enforcement on
+  `GET /workspaces/{id}/audit-events`. PII column masking (ADR-0011) needed no UI changes at all:
+  it happens server-side on the query response itself, so the existing query runner in
+  `DatasetDetailPage.tsx` already shows masked values to a non-owner with zero changes on this
+  side.
 
 ## Routes
 

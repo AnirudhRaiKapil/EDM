@@ -70,6 +70,39 @@ def _validate_confluence(config: dict, credentials: dict | None) -> None:
     _require_credentials(credentials, ["email", "api_token"], "confluence")
 
 
+def _validate_postgres(config: dict, credentials: dict | None) -> None:
+    _require_config(config, ["host", "port", "database"], "postgres")
+    if not config.get("query") and not config.get("table"):
+        raise ValidationFailedError("postgres sources require connection_config.query or .table")
+    _require_credentials(credentials, ["username", "password"], "postgres")
+
+
+def _validate_mysql(config: dict, credentials: dict | None) -> None:
+    _require_config(config, ["host", "port", "database"], "mysql")
+    if not config.get("query") and not config.get("table"):
+        raise ValidationFailedError("mysql sources require connection_config.query or .table")
+    _require_credentials(credentials, ["username", "password"], "mysql")
+
+
+def _validate_mongodb(config: dict, credentials: dict | None) -> None:
+    _require_config(config, ["host", "port", "database", "collection"], "mongodb")
+    # credentials are optional: many local/dev MongoDB deployments run without auth,
+    # mirroring the s3 connector's fallback-to-default-chain precedent.
+
+
+def _validate_google_sheets(config: dict, credentials: dict | None) -> None:
+    _require_config(config, ["spreadsheet_id", "range"], "google_sheets")
+    auth_type = config.get("auth_type", "api_key")
+    if auth_type == "api_key":
+        _require_credentials(credentials, ["api_key"], "google_sheets (api_key auth)")
+    elif auth_type == "bearer":
+        _require_credentials(credentials, ["token"], "google_sheets (bearer auth)")
+    else:
+        raise ValidationFailedError(
+            "google_sheets connection_config.auth_type must be one of: api_key, bearer"
+        )
+
+
 _VALIDATORS = {
     "sqlite": _validate_sqlite,
     "oracle": _validate_oracle,
@@ -78,6 +111,10 @@ _VALIDATORS = {
     "servicenow": _validate_servicenow,
     "jira": _validate_jira,
     "confluence": _validate_confluence,
+    "postgres": _validate_postgres,
+    "mysql": _validate_mysql,
+    "mongodb": _validate_mongodb,
+    "google_sheets": _validate_google_sheets,
 }
 
 
